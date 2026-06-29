@@ -1,0 +1,26 @@
+## Interface: 120007
+## Title: Mr. Mythical: DPS Predictor
+## Notes: Mr. Mythical: DPS Predictor - estimated DPS upgrades for gear from exported model data
+## Author: Braunerr
+## Version: 0.2.0
+## IconTexture: Logo.tga
+## SavedVariables: MR_MYTHICAL_DPS_CONFIG
+
+ModelData.lua
+Core.lua
+Util.lua
+LootControls.lua
+Profiles.lua
+Model.lua
+Predict.lua
+LoadoutEngine.lua
+CrestUpgradeData.lua
+TierTokenData.lua
+GearSources.lua
+ScanProgress.lua
+GearAdvisor.lua
+VaultAdvisor.lua
+CrestUpgradeAdvisor.lua
+Tooltip.lua
+Dashboard.lua
+Slash.lua
