@@ -1,8 +1,12 @@
 # Mr. Mythical: DPS Predictor
 
-Estimates how gear stat changes affect your DPS. The numbers come from a model trained on SimulationCraft data. It's not a full sim, but fast enough to use while you play.
+Mr. Mythical: DPS Predictor helps you compare gear upgrades without running SimulationCraft on every drop.
 
-Open **Gear Advisor** with `/mrdps` to compare upgrades without running SimulationCraft on every item. See **DPS vs equipped** on item tooltips, scan your bags, browse dungeon and raid loot from the journal, rank crest upgrades, and run **Find Loadout** to search combinations across the pieces you pick.
+This is not a stat weights addon. Tools like Pawn multiply your stats by fixed weights to guess at upgrades. That can work, but stats don't always add up that simply. The value of crit changes when you already have a lot of it, haste and mastery interact, and the right answer depends on your full gear set. Mr. Mythical uses a neural network trained on SimulationCraft batch data. The model is exported into the addon and runs locally on your machine, so estimates account for those interactions instead of treating every stat as a flat number. For most gear decisions, that's more accurate than traditional stat weights.
+
+You can use it when loot shows up and you need a quick answer. The addon estimates how a piece compares to what you wear and shows **DPS vs equipped** on item tooltips, in your bags, and on journal loot. Open **Gear Advisor** with `/mrdps` to scan inventory, browse dungeon and raid drops, and rank crest upgrades.
+
+You can also use it when a single item isn't the whole picture. **Find Loadout** searches combinations across the gear you select, so tier sets and slot synergies count, not just one swap at a time. It's not a full sim, but fast enough to use while you play. For trinkets, proc effects, and close calls, SimulationCraft is still the right tool.
 
 ---
 
@@ -14,7 +18,7 @@ Open **Gear Advisor** with `/mrdps` to compare upgrades without running Simulati
 
 ### Item tooltips
 
-- DPS vs equipped on hover (toggle in Gear Advisor)
+- DPS vs equipped on hover
 
 ### Gear Advisor: Bags
 

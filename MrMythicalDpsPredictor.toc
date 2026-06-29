@@ -1,10 +1,11 @@
 ## Interface: 120007
 ## Title: Mr. Mythical: DPS Predictor
-## Notes: Mr. Mythical: DPS Predictor - estimated DPS upgrades for gear from exported model data
+## Notes: Is that gear an upgrade? Fast DPS estimates on tooltips, in your bags, on journal loot, and across full loadouts.
 ## Author: Braunerr
 ## Version: 0.2.0
 ## IconTexture: Logo.tga
 ## SavedVariables: MR_MYTHICAL_DPS_CONFIG
+## X-Curse-Project-ID: 1592016
 
 ModelData.lua
 Core.lua
