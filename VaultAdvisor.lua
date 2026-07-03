@@ -23,6 +23,17 @@ local function positionVaultPopup()
   end
 end
 
+local function syncVaultPopupHint(hasTrinketRewards)
+  if not vaultPopup or not vaultPopup.swapHint then
+    return
+  end
+  local hint = NS.MSG_VAULT_SWAP_HINT
+  if hasTrinketRewards then
+    hint = hint .. " " .. NS.MSG_VAULT_TRINKET_DISCLAIMER
+  end
+  vaultPopup.swapHint:SetText(hint)
+end
+
 local function setVaultPopupBody(text, r, g, b)
   if not vaultPopup or not vaultPopup.bodyText then
     return
@@ -31,6 +42,9 @@ local function setVaultPopupBody(text, r, g, b)
   vaultPopup.bodyText:SetTextColor(r or 0.85, g or 0.85, b or 0.9)
   if vaultPopup.resultFrame then
     vaultPopup.resultFrame:Hide()
+  end
+  if vaultPopup.pickNote then
+    vaultPopup.pickNote:Show()
   end
 end
 
@@ -56,17 +70,16 @@ local function showVaultPopupResult(row)
     vaultPopup.resultName:SetText(row.name or "?")
     vaultPopup.resultName:SetTextColor(lr, lg, lb)
   end
-  if vaultPopup.resultActivity then
-    vaultPopup.resultActivity:SetText(row.source_label or "Great Vault")
-    vaultPopup.resultActivity:SetTextColor(0.7, 0.72, 0.8)
-  end
   if vaultPopup.resultSlot then
     vaultPopup.resultSlot:SetText(row.slot_label or "")
     vaultPopup.resultSlot:SetTextColor(0.55, 0.58, 0.65)
   end
+  if vaultPopup.pickNote then
+    vaultPopup.pickNote:Hide()
+  end
   if vaultPopup.resultDelta then
     if row.dps_delta ~= nil then
-      vaultPopup.resultDelta:SetText(NS.formatDpsVsEquipped(row.dps_delta))
+      vaultPopup.resultDelta:SetText(NS.formatDelta(row.dps_delta) .. " DPS")
       NS.setDpsDeltaTextColor(vaultPopup.resultDelta, row.dps_delta)
     else
       vaultPopup.resultDelta:SetText("-")
@@ -81,7 +94,7 @@ local function ensureVaultPopup()
   end
 
   local f = CreateFrame("Frame", "MrMythicalVaultAdvisorPopup", UIParent, "BackdropTemplate")
-  f:SetSize(300, 210)
+  f:SetSize(300, 132)
   f:SetFrameStrata("FULLSCREEN_DIALOG")
   f:SetBackdrop({
     bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -117,26 +130,17 @@ local function ensureVaultPopup()
   swapHint:SetTextColor(0.62, 0.64, 0.72)
   f.swapHint = swapHint
 
-  local trinketNote = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  trinketNote:SetPoint("TOPLEFT", swapHint, "BOTTOMLEFT", 0, -4)
-  trinketNote:SetPoint("RIGHT", f, "RIGHT", -12, 0)
-  trinketNote:SetJustifyH("LEFT")
-  trinketNote:SetWordWrap(true)
-  trinketNote:SetText(NS.MSG_VAULT_TRINKET_DISCLAIMER)
-  trinketNote:SetTextColor(0.75, 0.68, 0.45)
-  f.trinketNote = trinketNote
-
   local bodyText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  bodyText:SetPoint("TOPLEFT", trinketNote, "BOTTOMLEFT", 0, -10)
+  bodyText:SetPoint("TOPLEFT", swapHint, "BOTTOMLEFT", 0, -8)
   bodyText:SetPoint("RIGHT", f, "RIGHT", -12, 0)
   bodyText:SetJustifyH("LEFT")
   bodyText:SetWordWrap(true)
   f.bodyText = bodyText
 
   local resultFrame = CreateFrame("Frame", nil, f)
-  resultFrame:SetPoint("TOPLEFT", trinketNote, "BOTTOMLEFT", 0, -8)
+  resultFrame:SetPoint("TOPLEFT", swapHint, "BOTTOMLEFT", 0, -6)
   resultFrame:SetPoint("RIGHT", f, "RIGHT", -12, 0)
-  resultFrame:SetHeight(72)
+  resultFrame:SetHeight(52)
   resultFrame:Hide()
   f.resultFrame = resultFrame
 
@@ -152,30 +156,15 @@ local function ensureVaultPopup()
   resultName:SetWordWrap(true)
   f.resultName = resultName
 
-  local resultActivity = resultFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  resultActivity:SetPoint("TOPLEFT", resultName, "BOTTOMLEFT", 0, -2)
-  resultActivity:SetWidth(180)
-  resultActivity:SetJustifyH("LEFT")
-  f.resultActivity = resultActivity
-
   local resultSlot = resultFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  resultSlot:SetPoint("LEFT", resultActivity, "RIGHT", 8, 0)
+  resultSlot:SetPoint("TOPLEFT", resultName, "BOTTOMLEFT", 0, -2)
   resultSlot:SetJustifyH("LEFT")
   f.resultSlot = resultSlot
 
   local resultDelta = resultFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  resultDelta:SetPoint("TOPLEFT", resultActivity, "BOTTOMLEFT", 0, -4)
+  resultDelta:SetPoint("LEFT", resultSlot, "RIGHT", 8, 0)
   resultDelta:SetJustifyH("LEFT")
   f.resultDelta = resultDelta
-
-  local pickNote = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  pickNote:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 34)
-  pickNote:SetPoint("RIGHT", f, "RIGHT", -12, 0)
-  pickNote:SetJustifyH("LEFT")
-  pickNote:SetWordWrap(true)
-  pickNote:SetText(NS.MSG_VAULT_PICK_ONE)
-  pickNote:SetTextColor(0.55, 0.58, 0.65)
-  f.pickNote = pickNote
 
   local advisorBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   advisorBtn:SetSize(130, 22)
@@ -185,6 +174,15 @@ local function ensureVaultPopup()
     NS.openGearAdvisor()
   end)
   f.advisorBtn = advisorBtn
+
+  local pickNote = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  pickNote:SetPoint("BOTTOMLEFT", advisorBtn, "TOPLEFT", 0, 4)
+  pickNote:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  pickNote:SetJustifyH("LEFT")
+  pickNote:SetWordWrap(true)
+  pickNote:SetText(NS.MSG_VAULT_PICK_ONE)
+  pickNote:SetTextColor(0.55, 0.58, 0.65)
+  f.pickNote = pickNote
 
   vaultPopup = f
   return f
@@ -200,10 +198,7 @@ local function finishVaultPopupScan(runner, rows, errors, collectNote, hasTrinke
     return
   end
 
-  if vaultPopup.trinketNote then
-    vaultPopup.trinketNote:SetText(NS.MSG_VAULT_TRINKET_DISCLAIMER)
-    vaultPopup.trinketNote:Show()
-  end
+  syncVaultPopupHint(hasTrinketRewards)
 
   if collectNote and #rows == 0 then
     setVaultPopupBody(collectNote, 0.85, 0.55, 0.55)
@@ -212,22 +207,19 @@ local function finishVaultPopupScan(runner, rows, errors, collectNote, hasTrinke
 
   if #rows == 0 then
     if hasTrinketRewards then
-      setVaultPopupBody(
-        "Only trinket rewards are available. Trinkets are not estimated — use SimulationCraft for trinket comparisons.",
-        0.75, 0.68, 0.45
-      )
+      setVaultPopupBody(NS.MSG_VAULT_TRINKET_ONLY, 0.75, 0.68, 0.45)
     else
-      setVaultPopupBody("No scorable vault rewards found for your profile.", 0.85, 0.55, 0.55)
+      setVaultPopupBody(NS.MSG_VAULT_NO_SCORABLE, 0.85, 0.55, 0.55)
     end
     if errors and errors > 0 then
-      vaultPopup.bodyText:SetText((vaultPopup.bodyText:GetText() or "") .. string.format(" (%d scoring errors)", errors))
+      vaultPopup.bodyText:SetText((vaultPopup.bodyText:GetText() or "") .. string.format(NS.MSG_VAULT_SCORE_ERRORS, errors))
     end
     return
   end
 
   showVaultPopupResult(rows[1])
   if errors and errors > 0 then
-    vaultPopup.bodyText:SetText(string.format("%d reward(s) could not be scored.", errors))
+    vaultPopup.bodyText:SetText(string.format(NS.MSG_VAULT_UNSCORED, errors))
     vaultPopup.bodyText:SetTextColor(0.75, 0.6, 0.45)
   end
 end
@@ -265,17 +257,14 @@ local function startVaultPopupScan()
     end
   end
 
-  if popup.trinketNote then
-    popup.trinketNote:SetText(NS.MSG_VAULT_TRINKET_DISCLAIMER)
-    popup.trinketNote:Show()
-  end
+  syncVaultPopupHint(hasTrinketRewards)
 
   if #scoreableRefs == 0 then
     finishVaultPopupScan(nil, {}, 0, collectNote, hasTrinketRewards)
     return
   end
 
-  setVaultPopupBody("Scoring vault rewards vs your equipped gear…", 0.95, 0.85, 0.45)
+  setVaultPopupBody(NS.MSG_VAULT_SCORING, 0.95, 0.85, 0.45)
 
   local runner = {
     cancelled = false,
@@ -306,7 +295,8 @@ local function startVaultPopupScan()
     local scored = math.min(session.index - 1, runner.scoreTotal)
     if session.index <= runner.scoreTotal then
       setVaultPopupBody(string.format(
-        "Scoring vault rewards vs your equipped gear… %s/%s",
+        "%s %s/%s",
+        NS.MSG_VAULT_SCORING,
         scored,
         runner.scoreTotal
       ), 0.95, 0.85, 0.45)

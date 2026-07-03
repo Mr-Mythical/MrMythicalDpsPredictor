@@ -2561,6 +2561,23 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       end
     end
 
+    if NS.computeWeaponPairDpsDelta then
+      local loadout = NS.getWeaponLoadoutForSpec and NS.getWeaponLoadoutForSpec(specKey)
+      local mh = bestAssign[16]
+      local oh = bestAssign[17]
+      local is2H = mh and mh.link and NS.is2HWeapon and NS.is2HWeapon(mh.link)
+      local pairDps = NS.computeWeaponPairDpsDelta(mh, oh, equippedBySlot[16], equippedBySlot[17], specKey)
+      local usePairLabel = loadout and loadout.dual_wield and not is2H
+      if pairDps ~= nil then
+        for _, row in ipairs(slotRows) do
+          if (row.slot_id == 16 or row.slot_id == 17) and row.is_upgrade then
+            row.dps_delta = pairDps
+            row.weapon_pair_dps = usePairLabel
+          end
+        end
+      end
+    end
+
     local summary = {
       dps_base = basePred,
       dps_new = bestPred,

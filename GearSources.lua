@@ -485,7 +485,7 @@ function NS.collectVaultRewardRefs()
   if #refs == 0 then
     local note = "No vault rewards found"
     if C_WeeklyRewards.HasAvailableRewards and C_WeeklyRewards.HasAvailableRewards() then
-      note = "Vault rewards are available but item links could not be loaded. Open the Great Vault, then scan again."
+      note = "Rescan with vault open."
     end
     return refs, note
   end

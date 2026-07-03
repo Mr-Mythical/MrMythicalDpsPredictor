@@ -426,6 +426,17 @@ function NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey)
   return total
 end
 
+function NS.computeWeaponPairDpsDelta(mhCand, ohCand, eqMh, eqOh, specKey)
+  if not specKey or not NS.computeWeaponLoadoutDelta then
+    return nil
+  end
+  local baseStats = NS.getPlayerStatVector()
+  local basePred = NS.getCachedBaseDps(baseStats, specKey)
+  local wdelta = NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey)
+  local stats = NS.addStats(baseStats, wdelta, 1)
+  return NS.getCachedPrediction(stats, specKey) - basePred
+end
+
 local function findBestPairScenario(candidateRef, mainHandRef, specKey, classToken, candidateIsOffHandOnly, base, basePred)
   local best = nil
   local lastErr = nil
@@ -952,6 +963,10 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey)
     if bestDelta ~= nil then
       cand.dps_delta = bestDelta
       cand.is_upgrade = bestDelta > 0.5
+      if slotId == 16 or slotId == 17 then
+        local is2H = slotId == 16 and cand.link and is2HWeapon(cand.link)
+        cand.weapon_pair_scored = loadout.dual_wield and not is2H
+      end
     end
   end
 

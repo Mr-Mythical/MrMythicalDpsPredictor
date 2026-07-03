@@ -2,7 +2,7 @@ local ADDON_NAME, NS = ...
 
 NS.BRAND = "Mr. Mythical: DPS Predictor"
 NS.DASHBOARD_SLASH = "/mrdps"
-NS.DISCLAIMER_SHORT = "Estimates only, not a SimulationCraft replacement. Trinkets not supported."
+NS.DISCLAIMER_SHORT = "Estimates only."
 
 function NS.brandMsg(message)
   if message and message ~= "" then
@@ -21,7 +21,7 @@ function NS.formatTooltipDelta(profileLabel, modeStr, deltaText, showProfileLabe
   if modeStr and modeStr ~= "" then
     slotHint = modeStr
   end
-  local deltaLine = deltaText .. " DPS vs equipped"
+  local deltaLine = deltaText .. " DPS"
   if showProfileLabel and profileLabel and profileLabel ~= "" then
     if slotHint ~= "" then
       return string.format("%s: %s%s", profileLabel, deltaLine, slotHint)
@@ -575,42 +575,60 @@ function NS.formatDelta(v)
   return string.format("%.0f", v)
 end
 
-NS.DPS_VS_EQUIPPED_LABEL = "DPS vs equipped"
-NS.DPS_VS_EQUIPPED_CREST_LABEL = "DPS vs equipped / crest"
+NS.DPS_VS_EQUIPPED_LABEL = "DPS"
+NS.DPS_VS_EQUIPPED_CREST_LABEL = "DPS/crest"
 NS.LOADOUT_RESULT_STATUS_LABEL = "Change"
 NS.LOADOUT_ROW_KEEP = "Keep"
 NS.LOADOUT_ROW_CHANGE = "Change"
 NS.LOADOUT_LOOT_SOURCE_LABEL = "Source"
 NS.LOADOUT_CURRENT_LABEL = "Current"
 NS.LOADOUT_RECOMMENDED_LABEL = "Recommended"
-NS.CREST_AFTER_UPGRADE_LABEL = "After upgrade"
+NS.CREST_AFTER_UPGRADE_LABEL = "After"
 NS.CREST_HEADER_STEP = "Upgrade"
-NS.CREST_HEADER_COST = "Crest cost"
-NS.CREST_HEADER_DPS = "DPS / crest"
-NS.CREST_PLAN_TITLE = "Spending plan"
-NS.MSG_CREST_LITE_TITLE = "Crest spending plan"
-NS.MSG_CREST_LITE_OPEN_ADVISOR = "Open full view"
-NS.MSG_CREST_OTHER_UPGRADES = "Other affordable upgrades"
-NS.MSG_CREST_MODE_HINT = "Optimized crest spending plan for your crest balance."
-NS.MSG_CREST_SCANNING = "Scanning equipped gear for crest upgrades..."
+NS.CREST_HEADER_COST = "Cost"
+NS.CREST_HEADER_DPS = "DPS/crest"
+NS.CREST_PLAN_TITLE = "Plan"
+NS.MSG_CREST_LITE_TITLE = "Crest plan"
+NS.MSG_CREST_LITE_OPEN_ADVISOR = "Gear Advisor"
+NS.MSG_CREST_OTHER_UPGRADES = "Other upgrades"
+NS.MSG_CREST_MODE_HINT = "Crest spending plan."
+NS.MSG_CREST_SCANNING = "Scanning…"
 NS.MSG_CREST_BALANCES_PREFIX = "Owned:"
-NS.MSG_CREST_EMPTY = "No upgradeable equipped gear found for crest upgrades."
-NS.MSG_CREST_EMPTY_AFFORDABLE = "No affordable upgrades with your current crest balance."
-NS.MSG_CREST_EMPTY_SCANNING = "Scanning equipped gear..."
-NS.MSG_TRINKET_BASELINE = "Trinkets use BiS baseline, excluded from combination search"
-NS.MSG_LOADOUT_MODEL_SCOPE = "Set bonuses & trinket procs not in DPS estimate; tier/embellishment rules enforced only"
-NS.MSG_PROFILE_LOW_CONFIDENCE = "Hero talent profile match is uncertain — verify in profile dropdown"
+NS.MSG_CREST_EMPTY = "Nothing to upgrade."
+NS.MSG_CREST_EMPTY_AFFORDABLE = "Nothing affordable."
+NS.MSG_CREST_EMPTY_SCANNING = "Scanning…"
+NS.MSG_TRINKET_BASELINE = "Trinkets excluded"
+NS.MSG_LOADOUT_MODEL_SCOPE = "Set bonuses & trinket procs not modeled."
+NS.DISCLAIMER_HEADER = NS.DISCLAIMER_SHORT .. " " .. NS.MSG_LOADOUT_MODEL_SCOPE
+NS.MSG_PROFILE_LOW_CONFIDENCE = "Uncertain profile match"
 NS.LOADOUT_ROW_EQUIPPED = "Equipped"
 NS.LOADOUT_ROW_ALREADY_OPTIMAL = "Already optimal"
 
-NS.MSG_NO_PROFILE_LABEL = "No profile selected. Pick a hero talent build in " .. NS.DASHBOARD_SLASH .. "."
-NS.MSG_NO_PROFILE_ACTION = "Pick a hero talent build in " .. NS.DASHBOARD_SLASH .. " first."
-NS.MSG_FIND_LOADOUT_HINT = "Toggle items by slot, then click Find Loadout."
-NS.MSG_LOOT_MODE_HINT = "Pick an instance and upgrade track, then toggle items and click Find Loadout."
-NS.MSG_VAULT_PICK_ONE = "Pick one Great Vault reward per week. Find Loadout uses at most one vault item."
-NS.MSG_VAULT_SWAP_HINT = "Best single swap vs your equipped gear — not a full bag loadout search."
-NS.MSG_VAULT_TRINKET_DISCLAIMER = "Trinket vault rewards are not estimated."
-NS.MSG_VAULT_LOADOUT_WINNER = "Best vault reward from loadout search"
+NS.MSG_NO_PROFILE_LABEL = "No profile — " .. NS.DASHBOARD_SLASH
+NS.MSG_NO_PROFILE_ACTION = "Select a profile in " .. NS.DASHBOARD_SLASH .. "."
+NS.MSG_FIND_LOADOUT_HINT = "Toggle items, then Find Loadout."
+NS.MSG_LOOT_MODE_HINT = "Pick instance & track, then Find Loadout."
+NS.MSG_SCAN_STATUS = "%s scored · %s selected. %s"
+NS.MSG_SCAN_NO_COMBOS = "No valid combinations."
+NS.MSG_SCAN_COUNTING = "Counting… %s. %s"
+NS.MSG_SCAN_RECALC = "Recalculating… (%s). %s"
+NS.MSG_SCAN_COMBOS = "%s combos%s. %s"
+NS.MSG_VAULT_PICK_ONE = "One pick per week."
+NS.MSG_VAULT_SWAP_HINT = "Single swap vs equipped."
+NS.MSG_VAULT_TRINKET_DISCLAIMER = "Trinkets not scored."
+NS.MSG_VAULT_LOADOUT_WINNER = "Best vault pick"
+NS.MSG_VAULT_SCORING = "Scoring…"
+NS.MSG_VAULT_TRINKET_ONLY = "Trinkets only."
+NS.MSG_VAULT_NO_SCORABLE = "No scorable rewards."
+NS.MSG_VAULT_UNSCORED = "%d unscored."
+NS.MSG_VAULT_SCORE_ERRORS = " (%d errors)"
+NS.MSG_EQUIP_PENDING = "Equipping…"
+NS.MSG_EQUIP_DONE = "Equipped"
+NS.MSG_EQUIP_FAILED = "Failed"
+NS.MSG_EQUIP_COMBAT = "Can't equip in combat."
+NS.MSG_EQUIP_STATUS_DONE = "Equipped %s."
+NS.MSG_EQUIP_STATUS_PENDING = "Equipping %s…"
+NS.MSG_EQUIP_STATUS_FAILED = "Couldn't equip %s."
 NS.ADVISOR_SUBTITLE = ""
 
 function NS.getDpsDeltaColor(delta)
@@ -628,12 +646,12 @@ function NS.setDpsDeltaTextColor(fontString, delta)
 end
 
 function NS.formatDpsVsEquipped(delta)
-  return NS.formatDelta(delta or 0) .. " DPS vs equipped"
+  return NS.formatDelta(delta or 0) .. " DPS"
 end
 
 function NS.formatDpsVsEquippedPerCrest(delta, perCrest)
   return string.format(
-    "%s DPS vs equipped  (%s/crest)",
+    "%s DPS (%s/crest)",
     NS.formatDelta(delta or 0),
     NS.formatDelta(perCrest or 0)
   )
@@ -763,7 +781,7 @@ NS.SCAN_PERFORMANCE_USER_MODES = { "background", "balanced" }
 NS.SCAN_PERFORMANCE_PRESETS = {
   background = {
     label = "Background",
-    hint = "Smallest batches with pauses between them. Best while playing.",
+    hint = "Smallest batches. Best while playing.",
     yield_every = 8,
     score_batch = 4,
     batch_delay_sec = 0.05,
@@ -771,7 +789,7 @@ NS.SCAN_PERFORMANCE_PRESETS = {
   },
   balanced = {
     label = "Balanced",
-    hint = "Faster searches. May cause occasional lag spikes.",
+    hint = "Faster. May lag briefly.",
     yield_every = 50,
     score_batch = 12,
     batch_delay_sec = 0,
@@ -779,7 +797,7 @@ NS.SCAN_PERFORMANCE_PRESETS = {
   },
   custom = {
     label = "Custom",
-    hint = "Manual values from the debug yield field.",
+    hint = "Manual debug values.",
     resumes_per_pump = 1,
   },
 }
@@ -810,7 +828,7 @@ function NS.getScanPerformanceToggleButtonLabel(mode)
   local alternate = NS.getAlternateScanPerformanceMode(mode)
   local preset = NS.SCAN_PERFORMANCE_PRESETS[alternate]
   if preset and preset.label then
-    return "Switch to " .. preset.label
+    return "Use " .. preset.label
   end
   return "Switch speed"
 end

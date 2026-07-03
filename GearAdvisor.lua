@@ -30,6 +30,8 @@ local lootControls = NS.createLootControlState({
 })
 local loadoutVaultWinnerKey = nil
 local lastLoadoutScanOptsKey = nil
+local loadoutEquipState = {}
+local pendingEquips = {}
 local advisorScanScheduleToken = 0
 local modeScanCache = {}
 local isAdvisorScanActive
@@ -43,8 +45,8 @@ local GA_WIDTH = 920
 local GA_HEIGHT = 700
 local GA_PADDING = 14
 local GA_SCROLL_INSET = 42
-local GA_ACTION_H = 68
-local GA_STATUS_H = 54
+local GA_ACTION_H = 56
+local GA_STATUS_H = 36
 local GA_HEADER_H = 26
 local GA_LOADOUT_CURRENT_X = 100
 local GA_LOADOUT_REC_X = 380
@@ -95,7 +97,7 @@ local function addAdvisorTooltipLine(lines, text, r, g, b)
   lines[#lines + 1] = { text = text, r = r, g = g, b = b }
 end
 
-local function buildCandidateTooltipExtraLines(cand, iconInfo, isVault, isVaultWinner)
+local function buildCandidateTooltipExtraLines(cand, iconInfo, isVault, isVaultWinner, slotId)
   local lines = {}
   if not iconInfo.is_equipped then
     local sourceLabel = cand.source_label or SOURCE_LABELS[cand.source] or cand.source
@@ -107,6 +109,13 @@ local function buildCandidateTooltipExtraLines(cand, iconInfo, isVault, isVaultW
       end
     elseif sourceLabel then
       addAdvisorTooltipLine(lines, sourceLabel, 0.65, 0.7, 0.8)
+    end
+    if cand.dps_delta ~= nil then
+      local dpsLine = NS.formatDelta(cand.dps_delta) .. " DPS"
+      if cand.weapon_pair_scored and (slotId == 16 or slotId == 17) then
+        dpsLine = dpsLine .. " (1H pair)"
+      end
+      addAdvisorTooltipLine(lines, dpsLine, NS.getDpsDeltaColor(cand.dps_delta))
     end
   elseif cand.source_label or cand.source == "equipped" then
     addAdvisorTooltipLine(lines, "Currently equipped", 0.95, 0.82, 0.25)
@@ -143,6 +152,11 @@ local function normalizeAdvisorMode(modeId)
   return "bags"
 end
 
+local function resetLoadoutEquipState()
+  wipe(loadoutEquipState)
+  wipe(pendingEquips)
+end
+
 local function resetLoadoutScanState()
   scanComplete = false
   estimatedCombinations = nil
@@ -155,6 +169,7 @@ local function resetLoadoutScanState()
   statusNote = nil
   loadoutVaultWinnerKey = nil
   lastLoadoutScanOptsKey = nil
+  resetLoadoutEquipState()
 end
 
 local function clearModeScanCache()
@@ -250,6 +265,8 @@ end
 
 local getScanOpts
 local syncAdvisorStatusText
+local countLoadoutEquipsByState
+local syncLoadoutEquipStatusText
 
 local function getVaultKeyFromLoadoutRow(row)
   if not row or row.source ~= "vault" then
@@ -786,7 +803,7 @@ syncScanPerfControls = function()
   end
   if upgradeFilterFrame and findLoadoutBtn and upgradeFilterFrame:IsShown() then
     upgradeFilterFrame:ClearAllPoints()
-    upgradeFilterFrame:SetPoint("TOPLEFT", findLoadoutBtn, "TOPRIGHT", 12, 2)
+    upgradeFilterFrame:SetPoint("TOPLEFT", findLoadoutBtn, "TOPRIGHT", 12, 0)
     if showPerfControls and perfControl and perfControl:IsShown() then
       upgradeFilterFrame:SetPoint("TOPRIGHT", perfControl, "TOPLEFT", -12, 0)
     else
@@ -845,6 +862,16 @@ local function countSelectedCandidates()
   return n
 end
 
+local function countSelectedAlternatives()
+  local n = 0
+  for _, cand in ipairs(candidateRows or {}) do
+    if cand and NS.isAdvisorCandidateSelected(cand) then
+      n = n + 1
+    end
+  end
+  return n
+end
+
 local function formatComboCount(n)
   return NS.formatLargeNumber(n)
 end
@@ -867,10 +894,7 @@ end
 
 local function comboCountWarningSuffix(count)
   if NS.isHighLoadoutComboCount and NS.isHighLoadoutComboCount(count) then
-    return string.format(
-      " Warning: large search deselect items to reduce.",
-      formatComboCount(count)
-    )
+    return " (large search)"
   end
   return ""
 end
@@ -972,13 +996,8 @@ refreshLoadoutComboEstimate = function()
 end
 
 local function formatPostScanStatus()
-  local upgradeCount = 0
-  for _, row in ipairs(upgradeRows) do
-    if row.is_upgrade then
-      upgradeCount = upgradeCount + 1
-    end
-  end
-  local selectedCount = countSelectedCandidates()
+  local scoredCount = #upgradeRows
+  local selectedAltCount = countSelectedAlternatives()
   local vaultNote = ""
   if currentMode == "bags" and NS.isGreatVaultFrameOpen() then
     vaultNote = " " .. NS.MSG_VAULT_TRINKET_DISCLAIMER
@@ -992,76 +1011,90 @@ local function formatPostScanStatus()
   if comboCountInProgress then
     if estimatedCombinations and estimatedCombinations > 0 then
       comboPart = string.format(
-        "Recalculating combinations… (%s previously). %s",
+        NS.MSG_SCAN_RECALC,
         formatComboCount(estimatedCombinations),
         NS.MSG_FIND_LOADOUT_HINT
       )
     else
       comboPart = string.format(
-        "Counting combinations… %s found so far. %s",
+        NS.MSG_SCAN_COUNTING,
         formatComboCount(comboCountProgress or 0),
         NS.MSG_FIND_LOADOUT_HINT
       )
     end
-  elseif selectedCount == 0 then
+  elseif selectedAltCount == 0 then
     comboPart = NS.MSG_FIND_LOADOUT_HINT
   elseif estimatedCombinations and estimatedCombinations > 0 then
-    local pruneNote = NS.describeLoadoutPruneRules and NS.describeLoadoutPruneRules(NS.lastLoadoutPruneRules)
-    local pruneSuffix = pruneNote and (" (" .. pruneNote .. " required)") or ""
     highCombo = NS.isHighLoadoutComboCount(estimatedCombinations)
     comboPart = string.format(
-      "%s combinations to check%s%s. %s",
+      NS.MSG_SCAN_COMBOS,
       formatComboCount(estimatedCombinations),
-      pruneSuffix,
       comboCountWarningSuffix(estimatedCombinations),
       NS.MSG_FIND_LOADOUT_HINT
     )
   else
-    comboPart = "No valid combinations for the current selection."
-  end
-  local pruneWarning = nil
-  if isLoadoutMode() and candidatesBySlot then
-    local specKey = NS.getActiveProfileKey()
-    if specKey and NS.getLoadoutPruneConstraintWarning then
-      pruneWarning = NS.getLoadoutPruneConstraintWarning(specKey, candidatesBySlot)
-    end
-  end
-  if pruneWarning then
-    comboPart = comboPart .. " Warning: " .. pruneWarning .. "."
+    comboPart = NS.MSG_SCAN_NO_COMBOS
   end
   return string.format(
-    "Scored %s items, %s upgrades, %s selected. %s%s%s",
-    formatComboCount(#upgradeRows),
-    formatComboCount(upgradeCount),
-    formatComboCount(selectedCount),
-    comboPart, vaultNote, noteSuffix
-  ), highCombo, pruneWarning
+    NS.MSG_SCAN_STATUS,
+    formatComboCount(scoredCount),
+    formatComboCount(selectedAltCount),
+    comboPart
+  ) .. vaultNote .. noteSuffix, highCombo
 end
 
 applyPostScanStatus = function()
-  local text, highCombo, pruneWarning = formatPostScanStatus()
+  local text, highCombo = formatPostScanStatus()
   local color = { 0.55, 1, 0.65 }
-  if pruneWarning then
-    color = { 1, 0.72, 0.35 }
-  elseif highCombo then
+  if highCombo then
     color = { 1, 0.65, 0.35 }
   end
   setStatusText(text, color)
 end
 
+local function formatLoadoutResultMessage(summary, rows)
+  if not summary then
+    return ""
+  end
+  local vaultNote = ""
+  for _, row in ipairs(rows or {}) do
+    if row.is_upgrade and row.source == "vault" then
+      vaultNote = string.format(" · Vault: %s", row.name or "reward")
+      break
+    end
+  end
+  return string.format(
+    "Best loadout: %.0f -> %.0f (%s)%s",
+    summary.dps_base or 0,
+    summary.dps_new or 0,
+    NS.formatDelta(summary.dps_delta or 0),
+    vaultNote
+  )
+end
+
 syncAdvisorStatusText = function()
-  if not advisorFrame or not advisorFrame.summaryText or isAdvisorScanActive() then
+  if not advisorFrame or not advisorFrame.summaryText then
+    return
+  end
+  if isAdvisorScanActive() then
     return
   end
   if currentMode == "crests" then
     if crestPlanSummary then
       setStatusText(crestPlanSummary, { 0.55, 1, 0.65 })
+    elseif advisorScanRunner then
+      setStatusText(NS.MSG_CREST_SCANNING, { 0.95, 0.85, 0.45 })
     else
       setStatusText(NS.MSG_CREST_MODE_HINT)
     end
     return
   end
   if isShowingLoadoutResults() and loadoutSummary then
+    if next(pendingEquips) or countLoadoutEquipsByState("done") > 0 or countLoadoutEquipsByState("failed") > 0 then
+      syncLoadoutEquipStatusText()
+    else
+      setStatusText(formatLoadoutResultMessage(loadoutSummary, loadoutRows), { 0.55, 1, 0.65 })
+    end
     return
   end
   if scanComplete and isLoadoutMode() then
@@ -1167,9 +1200,144 @@ local function getLootLoadoutSourceText(item)
   return item.instance_name or item.source_label or "-"
 end
 
+local function loadoutRowEquipKey(item)
+  if not item then
+    return nil
+  end
+  if item.key then
+    return item.key
+  end
+  return string.format("%s:%s", tostring(item.slot_id or "?"), tostring(item.link or item.name or ""))
+end
+
+local function pendingEquipMatchesSlot(pending)
+  if not pending or not pending.slot_id or not NS.getSlotItemRef then
+    return false
+  end
+  local eqRef = NS.getSlotItemRef(pending.slot_id)
+  if not eqRef or not eqRef.link then
+    return false
+  end
+  if pending.guid and eqRef.guid and pending.guid == eqRef.guid then
+    return true
+  end
+  if pending.link and eqRef.link then
+    local pendingId = tonumber(pending.link:match("item:(%d+)"))
+    local eqId = tonumber(eqRef.link:match("item:(%d+)"))
+    if pendingId and eqId and pendingId == eqId then
+      return true
+    end
+  end
+  return false
+end
+
+countLoadoutEquipsByState = function(state)
+  local count = 0
+  for _, equipState in pairs(loadoutEquipState) do
+    if equipState == state then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+syncLoadoutEquipStatusText = function(lastMessage, color)
+  if not isShowingLoadoutResults() then
+    return
+  end
+  local doneCount = countLoadoutEquipsByState("done")
+  local pendingCount = countLoadoutEquipsByState("pending")
+  local upgradeCount = 0
+  for _, row in ipairs(loadoutRows) do
+    if row.is_upgrade and row.can_equip then
+      upgradeCount = upgradeCount + 1
+    end
+  end
+  local text = lastMessage
+  if not text and doneCount > 0 then
+    text = string.format("Equipped %d/%d changes.", doneCount, upgradeCount)
+  end
+  if not text and pendingCount > 0 then
+    text = NS.MSG_EQUIP_PENDING
+  end
+  if text then
+    setStatusText(text, color or { 0.55, 1, 0.65 })
+  end
+end
+
+local function refreshLoadoutEquipFeedback(lastMessage, color)
+  if isShowingLoadoutResults() then
+    renderAdvisorRows()
+  end
+  syncLoadoutEquipStatusText(lastMessage, color)
+end
+
+local function failPendingEquip(key, pending)
+  loadoutEquipState[key] = "failed"
+  pendingEquips[key] = nil
+  local label = pending and pending.name or "item"
+  refreshLoadoutEquipFeedback(string.format(NS.MSG_EQUIP_STATUS_FAILED, label), { 1, 0.5, 0.5 })
+  NS.brandPrint(string.format(NS.MSG_EQUIP_STATUS_FAILED, label))
+end
+
+local function completePendingEquip(key, pending)
+  loadoutEquipState[key] = "done"
+  pendingEquips[key] = nil
+  local label = pending and pending.name or "item"
+  refreshLoadoutEquipFeedback(string.format(NS.MSG_EQUIP_STATUS_DONE, label), { 0.55, 1, 0.65 })
+  NS.brandPrint(string.format(NS.MSG_EQUIP_STATUS_DONE, label))
+end
+
+local function verifyPendingEquips()
+  if not next(pendingEquips) then
+    return
+  end
+  local now = GetTime()
+  for key, pending in pairs(pendingEquips) do
+    if pendingEquipMatchesSlot(pending) then
+      completePendingEquip(key, pending)
+    elseif pending.started and (now - pending.started) >= 2.5 then
+      failPendingEquip(key, pending)
+    end
+  end
+end
+
+local function tryEquipLoadoutItem(item)
+  if not item or item.bag == nil or item.slot == nil then
+    return
+  end
+  if InCombatLockdown and InCombatLockdown() then
+    NS.brandPrint(NS.MSG_EQUIP_COMBAT)
+    setStatusText(NS.MSG_EQUIP_COMBAT, { 1, 0.55, 0.45 })
+    return
+  end
+  local key = loadoutRowEquipKey(item)
+  if not key or loadoutEquipState[key] == "pending" or loadoutEquipState[key] == "done" then
+    return
+  end
+  loadoutEquipState[key] = "pending"
+  pendingEquips[key] = {
+    key = key,
+    bag = item.bag,
+    slot = item.slot,
+    slot_id = item.slot_id,
+    link = item.link,
+    guid = item.guid,
+    name = item.name,
+    started = GetTime(),
+  }
+  if C_Container and C_Container.UseContainerItem then
+    C_Container.UseContainerItem(item.bag, item.slot)
+  end
+  refreshLoadoutEquipFeedback(string.format(NS.MSG_EQUIP_STATUS_PENDING, item.name or "item"), { 0.95, 0.85, 0.45 })
+  C_Timer.After(0.15, verifyPendingEquips)
+  C_Timer.After(2.5, verifyPendingEquips)
+end
+
 local function returnToSelectionView()
   loadoutSummary = nil
   loadoutRows = {}
+  resetLoadoutEquipState()
   renderAdvisorRows()
   syncActionButtons()
   updatePostScanStatusIfIdle()
@@ -1296,7 +1464,9 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
 
   local iconCount = #icons
   local lines = math.max(1, math.ceil(math.max(1, iconCount) / iconsPerLine))
-  local rowHeight = math.max(38, lines * (GA_ICON_SIZE + GA_ICON_SPACING) + 10)
+  local showWeaponDps = (slotId == 16 or slotId == 17)
+  local dpsLineExtra = showWeaponDps and 12 or 0
+  local rowHeight = math.max(38, lines * (GA_ICON_SIZE + GA_ICON_SPACING + dpsLineExtra) + 10)
 
   local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
   table.insert(advisorRows, row)
@@ -1414,6 +1584,19 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
       tag:SetTextColor(0.9, 0.75, 1)
     end
 
+    if not iconInfo.is_equipped and cand and cand.dps_delta ~= nil then
+      local dpsTag = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+      dpsTag:SetPoint("TOP", iconBtn, "BOTTOM", 0, -1)
+      dpsTag:SetWidth(GA_ICON_SIZE + 4)
+      dpsTag:SetJustifyH("CENTER")
+      local dpsLabel = NS.formatDelta(cand.dps_delta)
+      if cand.weapon_pair_scored then
+        dpsLabel = dpsLabel .. "*"
+      end
+      dpsTag:SetText(dpsLabel)
+      NS.setDpsDeltaTextColor(dpsTag, cand.dps_delta)
+    end
+
     iconBtn:SetScript("OnClick", function()
       local selected = NS.isAdvisorCandidateSelected(cand)
       if not selected and NS.candidateMatchesEquippedGear and NS.candidateMatchesEquippedGear(cand, slotId) then
@@ -1439,7 +1622,7 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
       if cand and cand.link then
         self.mrMythicalAdvisorItemTooltip = true
         self.mrMythicalTooltipExtraLines = buildCandidateTooltipExtraLines(
-          cand, iconInfo, isVault, isVaultWinner
+          cand, iconInfo, isVault, isVaultWinner, slotId
         )
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetHyperlink(cand.link)
@@ -1721,23 +1904,57 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
     statusText:SetText(isVaultWinner and "Vault pick" or (item.source_label or "Great Vault"))
     statusText:SetTextColor(isVaultWinner and 1 or 0.85, isVaultWinner and 0.88 or 0.7, isVaultWinner and 0.45 or 1)
   elseif item.is_upgrade then
-    statusText:SetText(NS.LOADOUT_ROW_CHANGE)
-    statusText:SetTextColor(0.55, 1, 0.65)
+    if item.dps_delta ~= nil then
+      local label = NS.formatDpsVsEquipped(item.dps_delta)
+      if item.weapon_pair_dps then
+        label = label .. " (pair)"
+      end
+      statusText:SetText(label)
+      statusText:SetWidth(120)
+      statusFrame:SetWidth(120)
+      NS.setDpsDeltaTextColor(statusText, item.dps_delta)
+    else
+      statusText:SetText(NS.LOADOUT_ROW_CHANGE)
+      statusText:SetTextColor(0.55, 1, 0.65)
+    end
   else
     statusText:SetText(NS.LOADOUT_ROW_KEEP)
     statusText:SetTextColor(0.5, 0.5, 0.55)
   end
 
   if item.is_upgrade and item.bag ~= nil and item.slot ~= nil then
-    local equipBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    equipBtn:SetSize(60, 22)
-    equipBtn:SetPoint("RIGHT", row, "RIGHT", -88, 0)
-    equipBtn:SetText("Equip")
-    equipBtn:SetScript("OnClick", function()
-      if C_Container and C_Container.UseContainerItem then
-        C_Container.UseContainerItem(item.bag, item.slot)
+    local equipKey = loadoutRowEquipKey(item)
+    local equipState = equipKey and loadoutEquipState[equipKey]
+    if equipState == "done" then
+      statusText:SetText(NS.MSG_EQUIP_DONE)
+      statusText:SetTextColor(0.45, 0.95, 0.55)
+    elseif equipState == "failed" then
+      local equipBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+      equipBtn:SetSize(60, 22)
+      equipBtn:SetPoint("RIGHT", row, "RIGHT", -88, 0)
+      equipBtn:SetText("Retry")
+      equipBtn:SetScript("OnClick", function()
+        loadoutEquipState[equipKey] = nil
+        tryEquipLoadoutItem(item)
+      end)
+      statusText:SetText(NS.MSG_EQUIP_FAILED)
+      statusText:SetTextColor(1, 0.45, 0.45)
+    else
+      local equipBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+      equipBtn:SetSize(60, 22)
+      equipBtn:SetPoint("RIGHT", row, "RIGHT", -88, 0)
+      if equipState == "pending" then
+        equipBtn:SetText("...")
+        equipBtn:Disable()
+        statusText:SetText(NS.MSG_EQUIP_PENDING)
+        statusText:SetTextColor(0.95, 0.85, 0.45)
+      else
+        equipBtn:SetText("Equip")
+        equipBtn:SetScript("OnClick", function()
+          tryEquipLoadoutItem(item)
+        end)
       end
-    end)
+    end
   elseif item.is_upgrade and item.source == "vault" then
     local vaultTag = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     vaultTag:SetPoint("RIGHT", row, "RIGHT", -88, 0)
@@ -2114,11 +2331,9 @@ local function finishRankScan(runner, rows, errors)
   renderAdvisorRows()
   syncVaultTrinketDisclaimer()
   refreshLoadoutComboEstimate()
-  local text, highCombo, pruneWarning = formatPostScanStatus()
+  local text, highCombo = formatPostScanStatus()
   local color = { 0.55, 1, 0.65 }
-  if pruneWarning then
-    color = { 1, 0.72, 0.35 }
-  elseif highCombo then
+  if highCombo then
     color = { 1, 0.65, 0.35 }
   end
   onAdvisorScanEnded(false, text, color)
@@ -2389,6 +2604,7 @@ local function startFindLoadoutScan()
   clearScanProgressBar()
   local selectedCount = countSelectedCandidates()
   loadoutVaultWinnerKey = nil
+  resetLoadoutEquipState()
 
   advisorScanRunner = { cancelled = false, specKey = specKey }
   local runner = advisorScanRunner
@@ -2435,44 +2651,7 @@ local function startFindLoadoutScan()
       loadoutSummary = payload.summary
       loadoutRows = payload.slotRows or {}
       setLoadoutVaultWinnerFromRows()
-      local pruneNote = loadoutSummary.prune_rules_active
-        and NS.describeLoadoutPruneRules
-        and NS.describeLoadoutPruneRules({
-          active = true,
-          min_tier_set_pieces = loadoutSummary.prune_min_tier_pieces,
-          min_embellishments = loadoutSummary.prune_min_embellishments,
-        })
-      local tierNote = ""
-      if loadoutSummary.prune_min_tier_pieces and loadoutSummary.tier_pieces_in_loadout then
-        tierNote = string.format(
-          ", %d/%d tier pieces",
-          loadoutSummary.tier_pieces_in_loadout,
-          loadoutSummary.prune_min_tier_pieces
-        )
-      end
-      local vaultNote = ""
-      for _, row in ipairs(loadoutRows) do
-        if row.is_upgrade and row.source == "vault" then
-          vaultNote = string.format(
-            ". Vault pick: %s (%s)",
-            row.name or "reward",
-            row.source_label or "Great Vault"
-          )
-          break
-        end
-      end
-      local resultMsg = string.format(
-        "Best loadout: %.0f -> %.0f total DPS (%s vs equipped). Checked %s / %s combinations%s%s%s. %s",
-        loadoutSummary.dps_base or 0,
-        loadoutSummary.dps_new or 0,
-        NS.formatDelta(loadoutSummary.dps_delta or 0),
-        formatComboCount(loadoutSummary.combinations_checked or 0),
-        formatComboCount(loadoutSummary.combinations_total or loadoutSummary.combinations_checked or 0),
-        pruneNote and (" (" .. pruneNote .. ")") or "",
-        tierNote,
-        vaultNote,
-        NS.MSG_LOADOUT_MODEL_SCOPE
-      )
+      local resultMsg = formatLoadoutResultMessage(loadoutSummary, loadoutRows)
       setStatusText(resultMsg, { 0.55, 1, 0.65 })
       onAdvisorScanEnded(false, resultMsg, { 0.55, 1, 0.65 })
     else
@@ -2480,11 +2659,6 @@ local function startFindLoadoutScan()
       loadoutRows = {}
       loadoutVaultWinnerKey = nil
       local failMsg = "No valid loadout for the current selection."
-      local pruneWarning = NS.getLoadoutPruneConstraintWarning
-        and NS.getLoadoutPruneConstraintWarning(specKey, candidatesBySlot)
-      if pruneWarning then
-        failMsg = failMsg .. " " .. pruneWarning .. "."
-      end
       setStatusText(failMsg, { 0.85, 0.55, 0.55 })
       onAdvisorScanEnded(false, failMsg, { 0.85, 0.55, 0.55 })
     end
@@ -2590,6 +2764,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     else
       syncModeTabs()
       syncModeUI()
+      syncAdvisorStatusText()
       if advisorFrame:IsShown() then
         scheduleAdvisorScan()
       end
@@ -2624,6 +2799,8 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
       if lastText then
         setStatusText(lastText, lastColor)
       end
+    else
+      syncAdvisorStatusText()
     end
     NS.AdvisorScanProgress.refreshTimerDisplay()
     hideScanProgressPopup()
@@ -2670,16 +2847,11 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   disclaimerText:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
   disclaimerText:SetWidth(GA_WIDTH - GA_PADDING * 2 - 40)
   disclaimerText:SetJustifyH("LEFT")
-  disclaimerText:SetText(NS.DISCLAIMER_SHORT)
+  disclaimerText:SetText(NS.DISCLAIMER_HEADER)
   disclaimerText:SetTextColor(0.5, 0.52, 0.58)
 
-  local specLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  specLabel:SetPoint("TOPLEFT", disclaimerText, "BOTTOMLEFT", 0, -6)
-  specLabel:SetJustifyH("LEFT")
-  f.specLabel = specLabel
-
   local profileSectionLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  profileSectionLabel:SetPoint("TOPLEFT", specLabel, "BOTTOMLEFT", 0, -4)
+  profileSectionLabel:SetPoint("TOPLEFT", disclaimerText, "BOTTOMLEFT", 0, -6)
   profileSectionLabel:SetText("Hero talent profile:")
   profileSectionLabel:SetTextColor(0.75, 0.8, 0.85)
 
@@ -2729,24 +2901,23 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   f.statusFrame = statusFrame
 
   local summaryText = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  summaryText:SetPoint("TOPLEFT", statusFrame, "TOPLEFT", 0, -2)
-  summaryText:SetPoint("TOPRIGHT", statusFrame, "TOPRIGHT", 0, -2)
-  summaryText:SetHeight(24)
+  summaryText:SetPoint("TOPLEFT", statusFrame, "TOPLEFT", 0, 0)
+  summaryText:SetPoint("TOPRIGHT", statusFrame, "TOPRIGHT", 0, 0)
   summaryText:SetJustifyH("LEFT")
   summaryText:SetWordWrap(true)
   summaryText:SetText(NS.MSG_FIND_LOADOUT_HINT)
   f.summaryText = summaryText
 
   local scanTimerText = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  scanTimerText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, -2)
-  scanTimerText:SetPoint("TOPRIGHT", summaryText, "BOTTOMRIGHT", 0, -2)
+  scanTimerText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, 0)
+  scanTimerText:SetPoint("TOPRIGHT", summaryText, "BOTTOMRIGHT", 0, 0)
   scanTimerText:SetJustifyH("LEFT")
   scanTimerText:SetTextColor(0.6, 0.75, 0.85)
   scanTimerText:Hide()
   f.scanTimerText = scanTimerText
 
   local actionBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
-  actionBar:SetPoint("TOP", statusFrame, "BOTTOM", 0, -4)
+  actionBar:SetPoint("TOP", statusFrame, "BOTTOM", 0, -2)
   actionBar:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   actionBar:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
   actionBar:SetHeight(GA_ACTION_H)
@@ -2762,14 +2933,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local findLoadoutBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
   findLoadoutBtn:SetSize(110, 24)
-  findLoadoutBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
+  findLoadoutBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
   findLoadoutBtn:SetText("Find Loadout")
   findLoadoutBtn:SetScript("OnClick", runFindLoadout)
   f.findLoadoutBtn = findLoadoutBtn
 
   local changeSelectionBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
   changeSelectionBtn:SetSize(120, 24)
-  changeSelectionBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
+  changeSelectionBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
   changeSelectionBtn:SetText("Change Selection")
   changeSelectionBtn:Hide()
   changeSelectionBtn:SetScript("OnClick", returnToSelectionView)
@@ -2777,14 +2948,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local stopScanBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
   stopScanBtn:SetSize(90, 24)
-  stopScanBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
+  stopScanBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
   stopScanBtn:SetText("Stop Scan")
   stopScanBtn:Hide()
   stopScanBtn:SetScript("OnClick", stopAdvisorScan)
   f.stopScanBtn = stopScanBtn
 
   local upgradeFilterFrame = CreateFrame("Frame", nil, actionBar)
-  upgradeFilterFrame:SetPoint("TOPLEFT", findLoadoutBtn, "TOPRIGHT", 12, 2)
+  upgradeFilterFrame:SetPoint("TOPLEFT", findLoadoutBtn, "TOPRIGHT", 12, 0)
   upgradeFilterFrame:SetHeight(56)
   f.upgradeFilterFrame = upgradeFilterFrame
 
@@ -2957,6 +3128,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   MR_MYTHICAL_DPS_CONFIG.gear_advisor_mode = openMode
   syncModeTabs()
   syncModeUI()
+  syncAdvisorStatusText()
   setupVaultFrameHooks()
   NS.refreshGearAdvisorChrome()
   syncActionButtons()
@@ -2975,9 +3147,6 @@ function NS.refreshGearAdvisorChrome(highlightAmbiguous)
   end
   local f = advisorFrame
 
-  if f.specLabel then
-    f.specLabel:SetText("Character: " .. NS.getCharacterSpecLabel())
-  end
   if f.versionText then
     f.versionText:SetText("v" .. NS.getAddonVersion())
   end
@@ -3058,7 +3227,14 @@ local advisorLootEventFrame = CreateFrame("Frame")
 advisorLootEventFrame:RegisterEvent("EJ_LOOT_DATA_RECIEVED")
 advisorLootEventFrame:RegisterEvent("ITEM_DATA_LOAD_RESULT")
 advisorLootEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+advisorLootEventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 advisorLootEventFrame:SetScript("OnEvent", function(_, event, itemID)
+  if event == "PLAYER_EQUIPMENT_CHANGED" then
+    if next(pendingEquips) then
+      C_Timer.After(0.05, verifyPendingEquips)
+    end
+    return
+  end
   if event == "PLAYER_ENTERING_WORLD" then
     if currentMode == "loot" and NS.invalidateEjDungeonLookup then
       NS.invalidateEjDungeonLookup()

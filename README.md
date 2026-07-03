@@ -1,55 +1,86 @@
 # Mr. Mythical: DPS Predictor
 
-Mr. Mythical: DPS Predictor helps you compare gear upgrades without running SimulationCraft on every drop.
+**A neural network in your tooltips. Instant DPS predictions for every item, every drop, and every crest you spend.**
 
-This is not a stat weights addon. Tools like Pawn multiply your stats by fixed weights to guess at upgrades. That can work, but stats don't always add up that simply. The value of crit changes when you already have a lot of it, haste and mastery interact, and the right answer depends on your full gear set. Mr. Mythical uses a neural network trained on SimulationCraft batch data. The model is exported into the addon and runs locally on your machine, so estimates account for those interactions instead of treating every stat as a flat number. For most gear decisions, that's more accurate than traditional stat weights.
+Loot drops. Everyone's waiting. Is it an upgrade?
 
-You can use it when loot shows up and you need a quick answer. The addon estimates how a piece compares to what you wear and shows **DPS vs equipped** on item tooltips, in your bags, and on journal loot. Open **Gear Advisor** with `/mrdps` to scan inventory, browse dungeon and raid drops, and rank crest upgrades.
-
-You can also use it when a single item isn't the whole picture. **Find Loadout** searches combinations across the gear you select, so tier sets and slot synergies count, not just one swap at a time. It's not a full sim, but fast enough to use while you play. For trinkets, proc effects, and close calls, SimulationCraft is still the right tool.
+Mr. Mythical: DPS Predictor answers that question the moment you hover an item, and it goes far beyond one at a time comparisons: it can scan **every drop in the current raid and Mythic+ season** to build your best possible gear set, and rank **every crest upgrade you can afford** by DPS gained per crest spent.
 
 ---
 
 **❤️ [Support on Patreon](https://www.patreon.com/c/mrmythical)**. Helps keep Mr. Mythical addons updated.
 
+**💬 [Join the Discord](https://discord.gg/jHMvF4VZMw)**. Questions, feedback, and prediction talk welcome.
+
 ---
 
-## Features
 
-### Item tooltips
 
-- DPS vs equipped on hover
+## Not another stat weights addon
 
-### Gear Advisor: Bags
+Most gear tools multiply your stats by fixed weights and add them up. That approximation breaks down constantly: the value of a stat drops as you stack it, haste and mastery interact differently for every spec, and the "right" answer depends on your entire gear set, not one number per stat.
 
-- Equipped item and alternates per slot
-- Toggle which items to include, then equip from loadout results
-- Great Vault rewards show up while the Great Vault window is open
+Mr. Mythical: DPS Predictor uses a **neural network trained on large batches of SimulationCraft data**, with dedicated profiles for every DPS and tank spec, including hero talent variants. The trained model ships inside the addon and runs entirely on your machine. There are no server calls, no importing weights, and nothing to configure. Because the model has seen how stats actually interact across thousands of simulated gear sets, it captures diminishing returns and stat synergies that flat weights simply can't.
 
-### Gear Advisor: Dungeons & Raids
+It's not a full simulation, but it's dramatically closer to one than stat weights, and it's fast enough to answer while the loot roll is still open.
 
-- Journal loot by instance or full current season
-- Preview Champion, Hero, and Myth upgrade tracks
-- Loadout results show which instance each piece comes from
+## Instant answers on every tooltip
 
-### Gear Advisor: Crest upgrades
+Hover any item and see its predicted DPS change versus what you're wearing, right on the tooltip. Works in your bags, on loot, in the Adventure Journal, and in chat links.
 
-- Options ranked by DPS gained per crest spent
+![Item tooltip showing +1335 DPS versus the equipped item](Screenshots/tooltip-comparison.png)
 
-**Find Loadout** works in Bags and Dungeons & Raids. It evaluates full loadouts across your selected items, not single swaps. Shows progress while it runs and what to change vs what you wear now.
+## Gear Advisor: your best loadout, not just single swaps
 
-### Commands
+Open the Gear Advisor with `/mrdps`. The **Bags** tab scans everything you own and searches for your best possible *combination* of gear. This matters because upgrades aren't independent: swapping your belt can change which ring is best. The Find Loadout engine evaluates full loadouts, so slot synergies count, then shows you exactly what to equip, with one-click **Equip** buttons.
 
-- `/mrdps` opens the dashboard
+![Gear Advisor Bags tab showing the best loadout with per-slot recommendations and Equip buttons](Screenshots/gear-advisor-bags.png)
 
-## Limitations
+## Scan the entire season for your best possible gear
 
-This is an estimator, not a SimulationCraft replacement.
+The **Dungeons & Raids** tab scans journal loot from a single instance or the **entire current season** and finds the strongest set of drops for your character. Preview items on Champion, Hero, or Myth upgrade tracks, and see exactly which boss and instance every recommended piece comes from, so you know precisely which dungeons to run and which bosses to target.
 
-- Does not simulate rotations, trinket procs, or set bonus mechanics
-- **Trinkets are not supported.** The model assumes BiS trinkets. Trinket slots are excluded from predictions.
+![Dungeons & Raids tab showing best-in-slot recommendations from across the season with their sources](Screenshots/gear-advisor-dungeons-raids.png)
 
-For trinkets, proc effects, and close upgrade calls, use SimulationCraft.
+## Spend your crests where they matter most
+
+Crests are limited, so spending them well matters. The **Crest Upgrades** tab reads your currencies, evaluates every upgrade you can afford, and builds a step-by-step plan ranked by **DPS gained per crest spent**. No more guessing whether the boots or the shoulders come first.
+
+![Crest Upgrades tab showing a ranked step-by-step upgrade plan with DPS per crest](Screenshots/crest-upgrades.png)
+
+## Great Vault, decided
+
+When you open the Great Vault, the addon evaluates every reward on offer and tells you which one is your biggest DPS gain, before you lock in your pick.
+
+![Great Vault window with the addon recommending the highest-DPS reward](Screenshots/great-vault.png)
+
+## Features at a glance
+
+- **DPS vs. equipped on every item tooltip**, instantly and locally
+- **Neural network predictions** trained on SimulationCraft data, per spec and hero talent
+- **Find Loadout**: searches gear combinations, not single swaps, so set and slot synergies count
+- **Full season scan**: find your best possible gear across all current raid and dungeon loot
+- **Upgrade track preview**: compare drops at Champion, Hero, and Myth item levels
+- **Crest upgrade planner**: ranked by DPS gained per crest spent
+- **Great Vault advisor**: know your best pick before you choose
+- **Supports all DPS and tank specs**, including hero talent profiles
+
+
+
+## Commands
+
+- `/mrdps` — open the Gear Advisor dashboard
+
+
+
+## Honest limitations
+
+This is a fast estimator, not a SimulationCraft replacement.
+
+- Rotations, trinket procs, and set bonus mechanics are not simulated
+- **Trinkets are not supported.** The model assumes best-in-slot trinkets, and trinket slots are excluded from predictions
+
+For trinket comparisons, proc-heavy effects, and razor-thin upgrade calls, SimulationCraft remains the right tool. For everything else, this gets you a near-sim answer in the time it takes to hover an item.
 
 ## Download
 
