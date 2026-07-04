@@ -636,11 +636,4 @@ M.single_model.output = {}
 end)()
 M.single_model.output.b = -0.0271486
 
-M.ensemble_models = {}
-
--- Backward compatibility aliases for older addon code paths.
-M.layers = M.single_model.layers
-M.output = M.single_model.output
-
 _G.MrMythicalDpsModelData = M
-_G.SimcDpsModelData = M

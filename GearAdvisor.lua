@@ -2839,7 +2839,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local versionText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   versionText:SetPoint("LEFT", title, "RIGHT", 8, 0)
-  versionText:SetText("v" .. NS.getAddonVersion())
+  versionText:SetText(NS.getAddonVersion())
   versionText:SetTextColor(0.55, 0.6, 0.65)
   f.versionText = versionText
 
@@ -3148,7 +3148,7 @@ function NS.refreshGearAdvisorChrome(highlightAmbiguous)
   local f = advisorFrame
 
   if f.versionText then
-    f.versionText:SetText("v" .. NS.getAddonVersion())
+    f.versionText:SetText(NS.getAddonVersion())
   end
 
   local active = NS.getActiveProfileKey()

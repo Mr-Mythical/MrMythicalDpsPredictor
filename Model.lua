@@ -29,28 +29,16 @@ local function batchnorm_precomputed(x, bn_s, bn_o, size)
   end
 end
 
-local function batchnorm_raw(x, bn_w, bn_b, bn_rm, bn_rv, eps)
-  -- v3 fallback: full BN with sqrt at runtime
-  local out = {}
-  for i = 1, #x do
-    local norm = (x[i] - bn_rm[i]) / math.sqrt(bn_rv[i] + eps)
-    out[i] = bn_w[i] * norm + bn_b[i]
-  end
-  return out
-end
-
 local function forwardModel(input, specKey, modelDef)
   local scaler = Model.scaler
-  local model_version = Model.model_version
-  local is_v5 = (model_version == "v5" or model_version == "v6")
-  local n_in = is_v5 and (Model.n_stat_features or #input) or Model.input_size
+  local n_in = Model.n_stat_features or #input
   local layers = modelDef.layers
   local n_layers = #layers
   local x_mean = scaler.x_mean
   local x_scale = scaler.x_scale
   local y_scale = scaler.y_scale
   local y_mean = scaler.y_mean
-  local spec_bias = (is_v5 and modelDef.prebaked) and modelDef.prebaked[specKey] or nil
+  local spec_bias = modelDef.prebaked and modelDef.prebaked[specKey] or nil
 
   for i = 1, n_in do
     buf_a[i] = (input[i] - x_mean[i]) / x_scale[i]
@@ -79,12 +67,7 @@ local function forwardModel(input, specKey, modelDef)
       if dst[j] <= 0 then dst[j] = 0 end
     end
 
-    if is_v5 or model_version == "v4" then
-      batchnorm_precomputed(dst, bn_s, bn_o, out_size)
-    else
-      local bn_out = batchnorm_raw(dst, layer.bn_w, layer.bn_b, layer.bn_rm, layer.bn_rv, Model.bn_eps or 1e-5)
-      for j = 1, out_size do dst[j] = bn_out[j] end
-    end
+    batchnorm_precomputed(dst, bn_s, bn_o, out_size)
 
     src, dst = dst, src
   end
@@ -103,11 +86,7 @@ local function forwardModel(input, specKey, modelDef)
 end
 
 local function forward(input, specKey)
-  if Model.single_model then
-    return forwardModel(input, specKey, Model.single_model)
-  end
-  -- Compatibility path for old exports.
-  return forwardModel(input, specKey, { layers = Model.layers, output = Model.output })
+  return forwardModel(input, specKey, Model.single_model)
 end
 
 local function getPrimaryStatValue()
@@ -472,44 +451,14 @@ local function addStats(a, b, sign)
   }
 end
 
-local function buildFeatureVector(stats, specKey)
-  local features = {}
-  for i = 1, Model.input_size do
-    features[i] = 0
-  end
-
-  features[Model.feature_index["primary_stat"]] = stats.primary_stat or 0
-  features[Model.feature_index["crit"]] = stats.crit or 0
-  features[Model.feature_index["haste"]] = stats.haste or 0
-  features[Model.feature_index["mastery"]] = stats.mastery or 0
-  features[Model.feature_index["versatility"]] = stats.versatility or 0
-
-  local specFeature = "spec_" .. specKey
-  local specIdx = Model.feature_index[specFeature]
-  if specIdx then
-    features[specIdx] = 1
-  end
-
-  return features
-end
-
 local function predictWithStats(stats, specKey)
-  local model_version = Model.model_version
-  local is_v5 = (model_version == "v5" or model_version == "v6")
-  local x
-  if is_v5 then
-    -- v5: only 5 stat features needed (spec is prebaked into layer-1 bias)
-    x = {
-      stats.primary_stat or 0,
-      stats.crit or 0,
-      stats.haste or 0,
-      stats.mastery or 0,
-      stats.versatility or 0,
-    }
-  else
-    x = buildFeatureVector(stats, specKey)
-  end
-
+  local x = {
+    stats.primary_stat or 0,
+    stats.crit or 0,
+    stats.haste or 0,
+    stats.mastery or 0,
+    stats.versatility or 0,
+  }
   return forward(x, specKey)
 end
 

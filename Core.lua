@@ -34,16 +34,11 @@ function NS.formatTooltipDelta(profileLabel, modeStr, deltaText, showProfileLabe
   return deltaLine
 end
 
-NS.Model = _G.MrMythicalDpsModelData or _G.SimcDpsModelData
+NS.Model = _G.MrMythicalDpsModelData
 if type(NS.Model) ~= "table" then
   NS.brandPrint("Model data missing. Reinstall the addon from a full release package.")
   return
 end
-
-if SIMCDPS_CONFIG and type(SIMCDPS_CONFIG) == "table" and not MR_MYTHICAL_DPS_CONFIG then
-  MR_MYTHICAL_DPS_CONFIG = SIMCDPS_CONFIG
-end
-SIMCDPS_CONFIG = nil
 
 MR_MYTHICAL_DPS_CONFIG = MR_MYTHICAL_DPS_CONFIG or {
   bag_scan_yield_every = 40,
@@ -88,7 +83,6 @@ if MR_MYTHICAL_DPS_CONFIG.spec_key and type(MR_MYTHICAL_DPS_CONFIG.spec_key) == 
   end
   MR_MYTHICAL_DPS_CONFIG.spec_key = nil
 end
-MR_MYTHICAL_DPS_CONFIG.use_ensemble = nil
 MR_MYTHICAL_DPS_CONFIG.seen_disclaimer = nil
 MR_MYTHICAL_DPS_CONFIG.loadout_polish_enabled = nil
 MR_MYTHICAL_DPS_CONFIG.loadout_deep_search = nil
@@ -1108,7 +1102,7 @@ eventFrame:SetScript("OnEvent", function(_, event)
       ))
     end
     NS.debugPrint(string.format(
-      "%s loaded (v%s). Type %s or click the minimap button.",
+      "%s loaded (%s). Type %s or click the minimap button.",
       NS.BRAND,
       NS.getAddonVersion(),
       NS.DASHBOARD_SLASH
