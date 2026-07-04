@@ -1,8 +1,8 @@
 ## Interface: 120007
 ## Title: Mr. Mythical: DPS Predictor
-## Notes: Is that gear an upgrade? Fast DPS estimates on tooltips, in your bags, on journal loot, and across full loadouts.
+## Notes: Neural network DPS Prediction in your tooltips, not just stat weights. Instant upgrade checks, full raid & M+ season scans, crest upgrade planning, and Great Vault advice.
 ## Author: Braunerr
-## Version: 0.2.0
+## Version: @project-version@
 ## IconTexture: Logo.tga
 ## SavedVariables: MR_MYTHICAL_DPS_CONFIG
 ## X-Curse-Project-ID: 1592016
