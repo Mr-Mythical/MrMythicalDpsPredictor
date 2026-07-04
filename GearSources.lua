@@ -492,7 +492,7 @@ function NS.collectVaultRewardRefs()
   return refs, nil
 end
 
-NS.GEAR_FINDER_ALL_INSTANCES = "all"
+NS.LOOT_ALL_INSTANCES = "all"
 
 local function getCurrentEjTierId()
   return (EJ_GetNumTiers and EJ_GetNumTiers()) or 1
@@ -531,8 +531,8 @@ function NS.ensureEncounterJournalLoaded()
     if not C_AddOns.IsAddOnLoaded("Blizzard_EncounterJournal") then
       C_AddOns.LoadAddOn("Blizzard_EncounterJournal")
       NS.invalidateEjDungeonLookup()
-      if NS.invalidateGearFinderLootPresets then
-        NS.invalidateGearFinderLootPresets()
+      if NS.invalidateLootUpgradePresets then
+        NS.invalidateLootUpgradePresets()
       end
     end
   end
@@ -2140,17 +2140,17 @@ isLootLinkPendingData = function(link)
   return true
 end
 
-function NS.getGearFinderLootUpgradePresets()
+function NS.getLootUpgradePresets()
   if not lootUpgradePresetsCache then
     lootUpgradePresetsCache = buildLootUpgradePresets()
-    NS.GEAR_FINDER_LOOT_ILVL_PRESETS = lootUpgradePresetsCache
+    NS.LOOT_UPGRADE_PRESETS = lootUpgradePresetsCache
   end
   return lootUpgradePresetsCache
 end
 
-NS.GEAR_FINDER_LOOT_ILVL_PRESETS = {}
+NS.LOOT_UPGRADE_PRESETS = {}
 
-function NS.invalidateGearFinderLootPresets()
+function NS.invalidateLootUpgradePresets()
   lootUpgradePresetsCache = nil
   previewLinkCache = {}
   itemIlvlPreviewCache = {}
@@ -2160,11 +2160,11 @@ function NS.invalidateGearFinderLootPresets()
   authoritativePreviewCache = {}
   ILVL_BY_CONTEXT_ENUM = nil
   invalidateEjDungeonLookup()
-  NS.GEAR_FINDER_LOOT_ILVL_PRESETS = NS.getGearFinderLootUpgradePresets()
+  NS.LOOT_UPGRADE_PRESETS = NS.getLootUpgradePresets()
 end
 
-function NS.getGearFinderLootUpgradePreset(keyOrIlvl)
-  local presets = NS.getGearFinderLootUpgradePresets()
+function NS.getLootUpgradePreset(keyOrIlvl)
+  local presets = NS.getLootUpgradePresets()
   if type(keyOrIlvl) == "string" and (keyOrIlvl == "" or keyOrIlvl == "journal") then
     keyOrIlvl = NS.DEFAULT_LOOT_UPGRADE_KEY
   end
@@ -2204,28 +2204,28 @@ function NS.getGearFinderLootUpgradePreset(keyOrIlvl)
       end
     end
   end
-  return presets[1] or NS.getGearFinderLootUpgradePreset(NS.DEFAULT_LOOT_UPGRADE_KEY)
+  return presets[1] or NS.getLootUpgradePreset(NS.DEFAULT_LOOT_UPGRADE_KEY)
 end
 
-function NS.syncGearFinderLootUpgradeKey(savedKey)
+function NS.syncLootUpgradeKey(savedKey)
   if savedKey == "journal" then
     savedKey = NS.DEFAULT_LOOT_UPGRADE_KEY
   end
-  local preset = NS.getGearFinderLootUpgradePreset(savedKey)
+  local preset = NS.getLootUpgradePreset(savedKey)
   return preset and preset.key or NS.DEFAULT_LOOT_UPGRADE_KEY
 end
 
 function NS.resolveLootPreviewPreset(scanOpts)
   if scanOpts and scanOpts.preset then
     if scanOpts.preset.key == "journal" then
-      return NS.getGearFinderLootUpgradePreset(NS.DEFAULT_LOOT_UPGRADE_KEY)
+      return NS.getLootUpgradePreset(NS.DEFAULT_LOOT_UPGRADE_KEY)
     end
     return scanOpts.preset
   end
   if scanOpts and scanOpts.upgrade_key then
-    return NS.getGearFinderLootUpgradePreset(scanOpts.upgrade_key)
+    return NS.getLootUpgradePreset(scanOpts.upgrade_key)
   end
-  return NS.getGearFinderLootUpgradePreset(NS.DEFAULT_LOOT_UPGRADE_KEY)
+  return NS.getLootUpgradePreset(NS.DEFAULT_LOOT_UPGRADE_KEY)
 end
 
 local function collectLootRefsForInstance(journalInstanceId, globalSeen, expectedName, specKey, instanceKind, previewPreset, collectOpts)
@@ -2354,7 +2354,7 @@ function NS.beginEncounterJournalLootRunner(specKey, instanceId, instanceName, s
   NS.ensureEncounterJournalLoaded()
   applyEncounterJournalPlayerLootFilters()
 
-  local mode = (instanceId == NS.GEAR_FINDER_ALL_INSTANCES) and "all" or "single"
+  local mode = (instanceId == NS.LOOT_ALL_INSTANCES) and "all" or "single"
   local runner = {
     cancelled = false,
     specKey = specKey,
@@ -2527,7 +2527,7 @@ function NS.collectEncounterJournalLootRefs(instanceId, expectedName, specKey, s
     end
   end
 
-  if instanceId == NS.GEAR_FINDER_ALL_INSTANCES then
+  if instanceId == NS.LOOT_ALL_INSTANCES then
     local instances = NS.collectEncounterJournalInstances()
     if #instances == 0 then
       return refs, "No current-season instances found. Open the Encounter Journal (J), then try again.", aggregateMeta
@@ -3844,7 +3844,7 @@ function NS.collectGearCandidates(specKey, opts)
   end
 
   if sources.loot then
-    local instanceId = opts.instance_id or MR_MYTHICAL_DPS_CONFIG.gear_advisor_instance_id or NS.GEAR_FINDER_ALL_INSTANCES
+    local instanceId = opts.instance_id or MR_MYTHICAL_DPS_CONFIG.gear_advisor_instance_id or NS.LOOT_ALL_INSTANCES
     local scanOpts = {
       upgrades_only = opts.upgrades_only,
       upgrade_key = opts.loot_upgrade or MR_MYTHICAL_DPS_CONFIG.gear_advisor_loot_upgrade,
@@ -3907,8 +3907,3 @@ function NS.collectGearCandidates(specKey, opts)
   local noteText = #notes > 0 and table.concat(notes, " ") or nil
   return candidatesBySlot, filteredFlatRefs, noteText
 end
-
-NS.getLootUpgradePresets = NS.getGearFinderLootUpgradePresets
-NS.getLootUpgradePreset = NS.getGearFinderLootUpgradePreset
-NS.syncLootUpgradeKey = NS.syncGearFinderLootUpgradeKey
-NS.invalidateLootUpgradePresets = NS.invalidateGearFinderLootPresets

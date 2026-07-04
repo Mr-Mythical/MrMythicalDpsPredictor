@@ -84,9 +84,7 @@ do
     if not tooltip or not tooltip.NumLines then
       return false
     end
-    local numLines = tooltip:NumLines()
-    local scanFrom = math.max(1, numLines - 10)
-    for i = scanFrom, numLines do
+    for i = 1, tooltip:NumLines() do
       local line = getTooltipTextLine(tooltip, i)
       if line and line.GetText and line:GetText() == HEADER_TEXT then
         return true
@@ -158,9 +156,6 @@ do
     if not tooltip or tooltip.mrMythicalTooltipLifecycleHooked then
       return
     end
-    tooltip:HookScript("OnShow", function(self)
-      self.mrMythicalBlockKey = nil
-    end)
     tooltip:HookScript("OnHide", function(self)
       self.mrMythicalBlockKey = nil
     end)
@@ -229,6 +224,10 @@ do
       return
     end
 
+    if tooltipAlreadyHasBlock(tooltip) then
+      return
+    end
+
     local extraLines = collectOwnerExtraLines(tooltip)
     local specKeys = NS.getTooltipProfileKeys()
     if not specKeys or #specKeys == 0 then
@@ -257,6 +256,9 @@ do
 
     local cacheKey = tooltipCacheKey(itemLink, specKeys)
     local blockKey = cacheKey .. "|" .. extraLinesBlockSuffix(extraLines)
+    if tooltip.mrMythicalBlockKey == blockKey then
+      return
+    end
     local predictionLines = nil
     local cached = predictionCache[cacheKey]
     if cached then
@@ -301,6 +303,10 @@ do
 
     C_Timer.After(0, function()
       if not tooltip:IsShown() then
+        return
+      end
+      if tooltipAlreadyHasBlock(tooltip) then
+        tooltip.mrMythicalBlockKey = blockKey
         return
       end
       local currentLink

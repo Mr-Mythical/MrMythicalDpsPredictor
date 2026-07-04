@@ -41,21 +41,11 @@ if type(NS.Model) ~= "table" then
 end
 
 MR_MYTHICAL_DPS_CONFIG = MR_MYTHICAL_DPS_CONFIG or {
-  bag_scan_yield_every = 40,
+  loadout_scan_yield_every = 40,
   scan_performance_mode = "balanced",
-  bag_item_selection = {},
   profile_by_prefix = {},
   profile_mode = "auto",
   debug = false,
-  dashboard_point = nil,
-  bag_scanner_point = nil,
-  bag_scan_upgrades_only = false,
-  gear_finder_point = nil,
-  gear_finder_tab = "vault",
-  gear_finder_instance_id = "all",
-  gear_finder_upgrades_only = false,
-  gear_finder_loot_upgrade = "hero_3",
-  gear_finder_loot_ilvl = nil,
   gear_advisor_point = nil,
   gear_advisor_sources = { bag = true, loot = false },
   gear_advisor_mode = "bags",
@@ -64,7 +54,7 @@ MR_MYTHICAL_DPS_CONFIG = MR_MYTHICAL_DPS_CONFIG or {
   gear_advisor_item_selection = {},
   gear_advisor_instance_id = "all",
   gear_advisor_loot_upgrade = "hero_3",
-  gear_advisor_crests_affordable_only = false,
+  scan_progress_point = nil,
 }
 
 if type(MR_MYTHICAL_DPS_CONFIG.bag_item_selection) ~= "table" then
@@ -92,7 +82,8 @@ MR_MYTHICAL_DPS_CONFIG.loadout_per_slot_cap = nil
 MR_MYTHICAL_DPS_CONFIG.loadout_weapon_pair_cap = nil
 
 if MR_MYTHICAL_DPS_CONFIG.scan_performance_mode == nil then
-  local legacyYield = tonumber(MR_MYTHICAL_DPS_CONFIG.bag_scan_yield_every)
+  local legacyYield = tonumber(MR_MYTHICAL_DPS_CONFIG.loadout_scan_yield_every)
+    or tonumber(MR_MYTHICAL_DPS_CONFIG.bag_scan_yield_every)
   if legacyYield and legacyYield ~= 40 then
     MR_MYTHICAL_DPS_CONFIG.scan_performance_mode = "custom"
     MR_MYTHICAL_DPS_CONFIG.loadout_scan_yield_every = legacyYield
@@ -100,6 +91,10 @@ if MR_MYTHICAL_DPS_CONFIG.scan_performance_mode == nil then
     MR_MYTHICAL_DPS_CONFIG.scan_performance_mode = "balanced"
   end
 end
+if MR_MYTHICAL_DPS_CONFIG.loadout_scan_yield_every == nil then
+  MR_MYTHICAL_DPS_CONFIG.loadout_scan_yield_every = tonumber(MR_MYTHICAL_DPS_CONFIG.bag_scan_yield_every) or 40
+end
+MR_MYTHICAL_DPS_CONFIG.bag_scan_yield_every = nil
 if MR_MYTHICAL_DPS_CONFIG.scan_performance_mode == "fast"
   or MR_MYTHICAL_DPS_CONFIG.scan_performance_mode == "maximum" then
   MR_MYTHICAL_DPS_CONFIG.scan_performance_mode = "balanced"
@@ -179,6 +174,17 @@ local function migrateBagSelectionToAdvisor()
   end
 end
 migrateBagSelectionToAdvisor()
+MR_MYTHICAL_DPS_CONFIG.bag_item_selection = nil
+MR_MYTHICAL_DPS_CONFIG.bag_scanner_point = nil
+MR_MYTHICAL_DPS_CONFIG.bag_scan_upgrades_only = nil
+MR_MYTHICAL_DPS_CONFIG.dashboard_point = nil
+MR_MYTHICAL_DPS_CONFIG.gear_finder_point = nil
+MR_MYTHICAL_DPS_CONFIG.gear_finder_tab = nil
+MR_MYTHICAL_DPS_CONFIG.gear_finder_instance_id = nil
+MR_MYTHICAL_DPS_CONFIG.gear_finder_upgrades_only = nil
+MR_MYTHICAL_DPS_CONFIG.gear_finder_loot_upgrade = nil
+MR_MYTHICAL_DPS_CONFIG.gear_finder_loot_ilvl = nil
+MR_MYTHICAL_DPS_CONFIG.minimap_button_point = nil
 
 function NS.getAdvisorItemSelectionTable()
   if type(MR_MYTHICAL_DPS_CONFIG.gear_advisor_item_selection) ~= "table" then
@@ -858,7 +864,6 @@ end
 function NS.setLoadoutScanYieldEvery(value)
   local yieldEvery = NS.getLoadoutScanYieldEvery(value)
   MR_MYTHICAL_DPS_CONFIG.loadout_scan_yield_every = yieldEvery
-  MR_MYTHICAL_DPS_CONFIG.bag_scan_yield_every = yieldEvery
   MR_MYTHICAL_DPS_CONFIG.scan_performance_mode = "custom"
   return yieldEvery
 end
@@ -1044,8 +1049,11 @@ function NS.getAddonVersion()
   if not getMetadata then
     return "?"
   end
-  local version = getMetadata(ADDON_NAME, "Version")
-  return version or "?"
+  local version = getMetadata(ADDON_NAME, "Version") or "?"
+  if version ~= "?" and version:sub(1, 1) ~= "v" then
+    version = "v" .. version
+  end
+  return version
 end
 
 function NS.getCharacterSpecLabel()
@@ -1102,7 +1110,7 @@ eventFrame:SetScript("OnEvent", function(_, event)
       ))
     end
     NS.debugPrint(string.format(
-      "%s loaded (%s). Type %s or click the minimap button.",
+      "%s loaded (%s). Type %s to open Gear Advisor.",
       NS.BRAND,
       NS.getAddonVersion(),
       NS.DASHBOARD_SLASH
@@ -1112,8 +1120,8 @@ eventFrame:SetScript("OnEvent", function(_, event)
     NS.detectAndCacheProfiles()
     NS.tryAutoMatchProfile()
     NS.onProfileContextChanged()
-    if NS.openDashboard and #NS.active_spec_keys > 1 and not NS.getActiveProfileKey() then
-      NS.openDashboard(true)
+    if NS.openGearAdvisor and #NS.active_spec_keys > 1 and not NS.getActiveProfileKey() then
+      NS.openGearAdvisor(nil, nil, true)
     end
   elseif event == "PLAYER_EQUIPMENT_CHANGED" then
     NS.onProfileContextChanged()

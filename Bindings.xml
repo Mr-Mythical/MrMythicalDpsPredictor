@@ -1,0 +1,5 @@
+<Bindings>
+  <Binding name="Open DPS Predictor" category="Mr. Mythical">
+    MrMythicalDpsPredictor_OpenDashboard();
+  </Binding>
+</Bindings>

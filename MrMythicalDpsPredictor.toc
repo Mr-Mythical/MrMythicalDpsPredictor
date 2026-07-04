@@ -23,5 +23,4 @@ GearAdvisor.lua
 VaultAdvisor.lua
 CrestUpgradeAdvisor.lua
 Tooltip.lua
-Dashboard.lua
 Slash.lua

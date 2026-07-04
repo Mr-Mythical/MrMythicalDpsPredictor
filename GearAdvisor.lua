@@ -110,13 +110,6 @@ local function buildCandidateTooltipExtraLines(cand, iconInfo, isVault, isVaultW
     elseif sourceLabel then
       addAdvisorTooltipLine(lines, sourceLabel, 0.65, 0.7, 0.8)
     end
-    if cand.dps_delta ~= nil then
-      local dpsLine = NS.formatDelta(cand.dps_delta) .. " DPS"
-      if cand.weapon_pair_scored and (slotId == 16 or slotId == 17) then
-        dpsLine = dpsLine .. " (1H pair)"
-      end
-      addAdvisorTooltipLine(lines, dpsLine, NS.getDpsDeltaColor(cand.dps_delta))
-    end
   elseif cand.source_label or cand.source == "equipped" then
     addAdvisorTooltipLine(lines, "Currently equipped", 0.95, 0.82, 0.25)
   end
@@ -3118,7 +3111,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   end)
 
   advisorFrame = f
-  lootControls.selectedInstanceId = MR_MYTHICAL_DPS_CONFIG.gear_advisor_instance_id or NS.GEAR_FINDER_ALL_INSTANCES
+  lootControls.selectedInstanceId = MR_MYTHICAL_DPS_CONFIG.gear_advisor_instance_id or NS.LOOT_ALL_INSTANCES
   lootControls:ensureSelectedLootUpgrade()
   NS.ensureEncounterJournalLoaded()
   populateInstanceDropdown()
@@ -3194,24 +3187,11 @@ function NS.openGearAdvisor(prefillSources, prefillMode, highlightAmbiguous)
   return frame
 end
 
-function NS.openDashboard(highlightAmbiguous)
-  return NS.openGearAdvisor(nil, nil, highlightAmbiguous)
-end
-
 function NS.getCachedCrestSpendPlanData()
   if crestSpendPlan and #crestSpendPlan > 0 then
     return crestSpendPlan, crestPlanSummary
   end
   return nil
-end
-
--- Legacy wrappers
-function NS.createGearFinderFrame()
-  return NS.createGearAdvisorFrame(nil, "loot")
-end
-
-function NS.createBagComparisonFrame()
-  return NS.createGearAdvisorFrame(nil, "bags")
 end
 
 NS.AdvisorScanProgress.register({
