@@ -2842,11 +2842,21 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   disclaimerText:SetJustifyH("LEFT")
   disclaimerText:SetText(NS.DISCLAIMER_HEADER)
   disclaimerText:SetTextColor(0.5, 0.52, 0.58)
+  f.disclaimerText = disclaimerText
+
+  local validationAnchor = CreateFrame("Frame", nil, f)
+  validationAnchor:SetPoint("TOPLEFT", disclaimerText, "BOTTOMLEFT", 0, -2)
+  validationAnchor:SetSize(GA_WIDTH - GA_PADDING * 2, 1)
+  f.validationAnchor = validationAnchor
+  if NS.attachValidationButton then
+    NS.attachValidationButton(f, validationAnchor)
+  end
 
   local profileSectionLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  profileSectionLabel:SetPoint("TOPLEFT", disclaimerText, "BOTTOMLEFT", 0, -6)
+  profileSectionLabel:SetPoint("TOPLEFT", validationAnchor, "BOTTOMLEFT", 0, -4)
   profileSectionLabel:SetText("Hero talent profile:")
   profileSectionLabel:SetTextColor(0.75, 0.8, 0.85)
+  f.profileSectionLabel = profileSectionLabel
 
   profileCallout = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   profileCallout:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", 0, -2)
@@ -3142,6 +3152,9 @@ function NS.refreshGearAdvisorChrome(highlightAmbiguous)
 
   if f.versionText then
     f.versionText:SetText(NS.getAddonVersion())
+  end
+  if NS.refreshValidationChrome then
+    NS.refreshValidationChrome(f)
   end
 
   local active = NS.getActiveProfileKey()

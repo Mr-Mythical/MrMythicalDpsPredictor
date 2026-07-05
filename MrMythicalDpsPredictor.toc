@@ -8,12 +8,14 @@
 ## X-Curse-Project-ID: 1592016
 
 ModelData.lua
+ValidationData.lua
 Core.lua
 Util.lua
 LootControls.lua
 Profiles.lua
 Model.lua
 Predict.lua
+ValidationInfo.lua
 LoadoutEngine.lua
 CrestUpgradeData.lua
 TierTokenData.lua
