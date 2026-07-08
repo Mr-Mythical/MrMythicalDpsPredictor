@@ -1,7 +1,6 @@
 local ADDON_NAME, NS = ...
 
 -- Midnight S1 tier tokens (The Voidspire). Maps token item ID -> class -> tier piece item ID.
--- Maintained manually from Encounter Journal loot; update each tier season.
 local TIER_TOKEN_PIECES = {
   -- Voidspire tier 1 (Dreadful / Mystic / Venerated / Zenith)
   [237581] = { DEATHKNIGHT = 237631, DEMONHUNTER = 237694, WARLOCK = 237703 },
