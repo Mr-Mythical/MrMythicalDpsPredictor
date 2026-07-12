@@ -77,6 +77,16 @@ local function primeItemInfo(link, itemID)
   if itemID and GetItemInfoInstant then
     GetItemInfoInstant(itemID)
   end
+  if itemID and C_Item and C_Item.RequestLoadItemDataByID then
+    local cached = false
+    if C_Item.IsItemDataCachedByID then
+      local okCached, isCached = pcall(C_Item.IsItemDataCachedByID, itemID)
+      cached = okCached and isCached == true
+    end
+    if not cached then
+      pcall(C_Item.RequestLoadItemDataByID, itemID)
+    end
+  end
   if link and C_Item and C_Item.GetItemInfo then
     C_Item.GetItemInfo(link)
   elseif link and GetItemInfo then
@@ -628,6 +638,18 @@ local function getPreviewTargetIlvl(presetIlvl, instanceId, instanceName, instan
   return presetIlvl
 end
 
+local function getPreviewTargetTrack(previewPreset, instanceId, instanceName, instanceKind)
+  if not previewPreset then
+    return nil
+  end
+  -- Sporefall uses fixed raid difficulties rather than upgrade-track ranks.
+  -- Requiring the dropdown track there rejects otherwise-correct raid links.
+  if instanceKind == "Raid" and isSporefallInstance(instanceId, instanceName) then
+    return nil
+  end
+  return previewPreset.track
+end
+
 -- Midnight S1 M+ map IDs (fallback when API filters are incomplete).
 local SEASON_CHALLENGE_MAP_IDS = { 402, 558, 560, 559, 556, 239, 161, 557 }
 
@@ -1041,25 +1063,46 @@ end
 local lootUpgradePresetsCache = nil
 local previewLinkCache = {}
 local itemIlvlPreviewCache = {}
-local trackIlvlTemplateCache = {}
-local slotTemplateCache = {}
-local ilvlTemplateList = {}
 local authoritativePreviewCache = {}
--- 259/263 appear on two upgrade tracks; all other preset ilvls are unique.
-local AMBIGUOUS_TRACK_ILVLS = { [259] = true, [263] = true }
-local ILVL_BY_CONTEXT_ENUM = nil
+local previewContextHintCache = {}
+local function previewContextHintKey(targetIlvl, instanceKind, targetTrack)
+  return string.format("%s:%d:%s", instanceKind or "Dungeon", targetIlvl or 0, targetTrack or "")
+end
+
+local function clearPreviewCaches()
+  previewLinkCache = {}
+  authoritativePreviewCache = {}
+  previewContextHintCache = {}
+  itemIlvlPreviewCache = {}
+end
+
+-- Shared ilvls must never use an ilvl-only cache or an unreadable track.
+local AMBIGUOUS_TRACK_ILVLS = {
+  [259] = true,
+  [263] = true,
+  [272] = true,
+  [276] = true,
+}
 local CONTEXT_ENUM_FALLBACK
 local getCreationContextValue
 local getStaticContextForIlvl
 local getContextValueForIlvl
-local graftItemWithTargetContext
+local getPresetDungeonContextEnum
+local trackToPresetKey
 local getPreviewLinkForContext
+local previewLinkPassesTrackCheck
+local getPresetCrestBonusId
 
 local function normalizeTrackLabel(track)
   if not track or track == "" then
     return nil
   end
   return (track:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function previewTrackCacheKey(targetIlvl, targetTrack)
+  local normalized = normalizeTrackLabel(targetTrack)
+  return string.format("%d|%s", targetIlvl or 0, normalized and normalized:lower() or "")
 end
 
 local function parseTrackTierAndRank(track)
@@ -1080,13 +1123,16 @@ local function trackLabelsMatch(linkTrack, targetTrack)
     return true
   end
   if not linkTier then
-    return true
+    return false
   end
   if linkTier:lower() ~= targetTier:lower() then
     return false
   end
   if targetRank and linkRank then
     return targetRank == linkRank
+  end
+  if targetRank and not linkRank then
+    return false
   end
   return true
 end
@@ -1152,51 +1198,616 @@ local function rebuildItemLink(baseLink, parts)
   return nil
 end
 
--- Keep template upgrade encoding; swap only the item ID.
-local function graftItemIdentity(journalLink, templateLink)
-  local journalParts = padItemParts(splitItemPayload(journalLink), 2)
-  local templateParts = padItemParts(splitItemPayload(templateLink), 13)
-  if not journalParts or not templateParts or journalParts[1] ~= "item" or templateParts[1] ~= "item" then
-    return nil
-  end
-  if not journalParts[2] or journalParts[2] == "" then
-    return nil
-  end
+-- Midnight dungeon upgrade presets align 1:1 with crest track ranks (973/974/978).
+local LOOT_TRACK_CREST_IDS = {
+  champion = 973,
+  hero = 974,
+  myth = 978,
+}
 
+local function getLootPresetCrestStep(targetTrack)
+  if not targetTrack then
+    return nil
+  end
+  local tier, rank = parseTrackTierAndRank(normalizeTrackLabel(targetTrack))
+  if not tier or not rank then
+    return nil
+  end
+  local trackId = LOOT_TRACK_CREST_IDS[tier:lower()]
+  if not trackId then
+    return nil
+  end
+  return trackId, rank
+end
+
+local function isBonusCountField(value)
+  local n = tonumber(value)
+  return n and n >= 0 and n <= 10
+end
+
+local function readBonusIdsFromCountIndex(parts, countIndex)
+  if not parts or not countIndex then
+    return nil
+  end
+  local numBonus = tonumber(parts[countIndex]) or 0
+  if numBonus <= 0 or numBonus > 10 then
+    return nil
+  end
+  local bonusIDs = {}
+  for i = 1, numBonus do
+    local bonusID = tonumber(parts[countIndex + i])
+    if not bonusID then
+      return nil
+    end
+    bonusIDs[i] = bonusID
+  end
+  return #bonusIDs > 0 and bonusIDs or nil
+end
+
+local function getUpgradeFieldLayout(parts)
+  if not parts then
+    return nil
+  end
+  -- Match TierTokenData: validate bonus list at count field before picking layout.
+  if readBonusIdsFromCountIndex(parts, 14) then
+    return {
+      extended = false,
+      contextIndex = 13,
+      numBonusIndex = 14,
+      firstBonusIndex = 15,
+    }
+  end
+  if readBonusIdsFromCountIndex(parts, 13) then
+    return {
+      extended = false,
+      contextIndex = 12,
+      numBonusIndex = 13,
+      firstBonusIndex = 14,
+    }
+  end
+  local gapField = parts[13]
+  local hasGap = gapField == nil or gapField == "" or gapField == "0"
+  if hasGap and tonumber(parts[14]) and readBonusIdsFromCountIndex(parts, 15) then
+    return {
+      extended = true,
+      contextIndex = 14,
+      numBonusIndex = 15,
+      firstBonusIndex = 16,
+    }
+  end
+  -- Raid journal without gap: link level at 12, context at 14, count at 15.
+  if tonumber(parts[14]) and readBonusIdsFromCountIndex(parts, 15) then
+    return {
+      extended = false,
+      contextIndex = 14,
+      numBonusIndex = 15,
+      firstBonusIndex = 16,
+    }
+  end
+  return {
+    extended = false,
+    contextIndex = 13,
+    numBonusIndex = 14,
+    firstBonusIndex = 15,
+  }
+end
+
+local function collectBindBonusesFromParts(parts)
+  if not parts then
+    return nil
+  end
+  local layout = getUpgradeFieldLayout(parts)
+  local kept = {}
+  local seen = {}
+  local function tryKeep(bid)
+    bid = tonumber(bid)
+    if bid and not NS.isCrestUpgradeBonusId(bid) and not seen[bid] then
+      seen[bid] = true
+      kept[#kept + 1] = bid
+    end
+  end
+  local numBonus = tonumber(parts[layout.numBonusIndex]) or 0
+  if numBonus > 10 then
+    numBonus = 0
+  end
+  if numBonus > 0 then
+    for i = 1, numBonus do
+      tryKeep(parts[layout.firstBonusIndex + i - 1])
+    end
+  else
+    for i = layout.firstBonusIndex, #parts do
+      tryKeep(parts[i])
+    end
+  end
+  return kept
+end
+
+local function linkHasOnlyExpectedCrestBonus(link, targetTrack)
+  if not link or not targetTrack then
+    return false
+  end
+  local expectedBonus = getPresetCrestBonusId(targetTrack)
+  if not expectedBonus or not NS.isCrestUpgradeBonusId then
+    return false
+  end
+  local parts = splitItemPayload(link)
+  if not parts then
+    return false
+  end
+  local foundExpected = false
+  for i = 13, #parts do
+    local bid = tonumber(parts[i])
+    if bid and NS.isCrestUpgradeBonusId(bid) then
+      if bid == expectedBonus then
+        foundExpected = true
+      else
+        return false
+      end
+    end
+  end
+  return foundExpected
+end
+
+local function linkContainsBonusId(link, bonusId)
+  if not link or not bonusId then
+    return false
+  end
+  local parts = splitItemPayload(link)
+  if not parts then
+    return false
+  end
+  for i = 13, #parts do
+    if tonumber(parts[i]) == bonusId then
+      return true
+    end
+  end
+  return false
+end
+
+local UPGRADE_LAYOUT_CANDIDATES = {
+  { contextIndex = 13, numBonusIndex = 14, firstBonusIndex = 15 },
+  { contextIndex = 14, numBonusIndex = 15, firstBonusIndex = 16 },
+  { contextIndex = 12, numBonusIndex = 13, firstBonusIndex = 14 },
+}
+
+getPresetCrestBonusId = function(targetTrack)
+  if not targetTrack then
+    return nil
+  end
+  local trackId, upgradeLevel = getLootPresetCrestStep(targetTrack)
+  if trackId and NS.ensureCrestTrackCached then
+    NS.ensureCrestTrackCached(trackId)
+  end
+  return trackId and upgradeLevel and NS.findCrestBonusIdForGroupLevel(trackId, upgradeLevel) or nil
+end
+
+local function encodePresetUpgradeOnPartsWithLayout(parts, expectedCtx, targetTrack, layout, bindBonuses)
+  if not parts or parts[1] ~= "item" or not layout then
+    return nil
+  end
+  bindBonuses = bindBonuses or collectBindBonusesFromParts(parts) or {}
+  local crestBonusId = getPresetCrestBonusId(targetTrack)
   local merged = {}
-  for i, value in ipairs(templateParts) do
+  for i = 1, layout.firstBonusIndex - 1 do
+    merged[i] = parts[i] or ""
+  end
+  merged[layout.contextIndex] = tostring(expectedCtx or tonumber(parts[layout.contextIndex]) or 0)
+  local allBonuses = {}
+  for _, bid in ipairs(bindBonuses) do
+    allBonuses[#allBonuses + 1] = tostring(bid)
+  end
+  if crestBonusId then
+    allBonuses[#allBonuses + 1] = tostring(crestBonusId)
+  elseif targetTrack then
+    return nil
+  end
+  merged[layout.numBonusIndex] = tostring(#allBonuses)
+  for i, bid in ipairs(allBonuses) do
+    merged[layout.firstBonusIndex + i - 1] = bid
+  end
+  return merged
+end
+
+local function encodePresetUpgradeOnParts(parts, expectedCtx, targetTrack)
+  if not parts or parts[1] ~= "item" then
+    return nil
+  end
+  return encodePresetUpgradeOnPartsWithLayout(parts, expectedCtx, targetTrack, getUpgradeFieldLayout(parts))
+end
+
+local function getCreationContextValueSet()
+  local values = {}
+  if CONTEXT_ENUM_FALLBACK then
+    for _, value in pairs(CONTEXT_ENUM_FALLBACK) do
+      values[value] = true
+    end
+  end
+  return values
+end
+
+local function linkHasOnlyExpectedCreationContext(link, expectedCtx)
+  if not link or not expectedCtx then
+    return false
+  end
+  local parts = splitItemPayload(link)
+  if not parts then
+    return false
+  end
+  local contextValues = getCreationContextValueSet()
+  local foundExpected = false
+  for i = 12, 16 do
+    local value = tonumber(parts[i])
+    if value and contextValues[value] then
+      if value == expectedCtx then
+        foundExpected = true
+      else
+        return false
+      end
+    end
+  end
+  return foundExpected
+end
+
+-- Dungeon previews: keep API link header/context, replace ilvl bonuses with preset crest only.
+-- Keeping journal/API bind bonuses (e.g. 3524) stacks a second "Heroic" label on ChallengeMode contexts.
+local function encodeDungeonPreviewOnPartsWithLayout(parts, expectedCtx, targetTrack, layout)
+  if not parts or parts[1] ~= "item" or not layout then
+    return nil
+  end
+  local crestBonusId = getPresetCrestBonusId(targetTrack)
+  if not crestBonusId then
+    return nil
+  end
+  local contextValues = getCreationContextValueSet()
+  local merged = {}
+  for i = 1, layout.firstBonusIndex - 1 do
+    local value = parts[i] or ""
+    local bid = tonumber(value)
+    if bid and NS.isCrestUpgradeBonusId and NS.isCrestUpgradeBonusId(bid) then
+      value = ""
+    elseif i ~= layout.contextIndex and i ~= layout.numBonusIndex and bid then
+      if contextValues[bid] or (bid >= 1 and bid <= 10) then
+        value = ""
+      end
+    end
     merged[i] = value
   end
-  merged[2] = journalParts[2]
+  merged[layout.contextIndex] = tostring(expectedCtx)
+  merged[layout.numBonusIndex] = "1"
+  merged[layout.firstBonusIndex] = tostring(crestBonusId)
+  return merged
+end
 
-  local rebuilt = rebuildItemLink(journalLink, merged)
-  if not rebuilt or rebuilt == journalLink then
+local function encodeDungeonPreviewOnParts(parts, expectedCtx, targetTrack)
+  if not parts or parts[1] ~= "item" then
     return nil
   end
-  primeItemInfo(rebuilt, tonumber(journalParts[2]))
+  return encodeDungeonPreviewOnPartsWithLayout(parts, expectedCtx, targetTrack, getUpgradeFieldLayout(parts))
+end
+
+local function dungeonEncodedLinkPassesChecks(link, expectedCtx, targetTrack)
+  return link
+    and linkHasOnlyExpectedCrestBonus(link, targetTrack)
+    and linkHasOnlyExpectedCreationContext(link, expectedCtx)
+end
+
+local function applyDungeonPreviewEncoding(link, expectedCtx, targetTrack)
+  if not link then
+    return nil
+  end
+  local parts = splitItemPayload(link)
+  if not parts then
+    return nil
+  end
+  parts = padItemParts(parts, 16)
+  local detectedLayout = getUpgradeFieldLayout(parts)
+  local layouts = { detectedLayout }
+  for _, layout in ipairs(UPGRADE_LAYOUT_CANDIDATES) do
+    if layout.contextIndex ~= detectedLayout.contextIndex
+      or layout.numBonusIndex ~= detectedLayout.numBonusIndex then
+      layouts[#layouts + 1] = layout
+    end
+  end
+  for _, layout in ipairs(layouts) do
+    local merged = encodeDungeonPreviewOnPartsWithLayout(parts, expectedCtx, targetTrack, layout)
+    if merged then
+      local rebuilt = rebuildItemLink(link, merged)
+      if rebuilt and dungeonEncodedLinkPassesChecks(rebuilt, expectedCtx, targetTrack) then
+        primeItemInfo(rebuilt, tonumber(merged[2]))
+        return rebuilt
+      end
+    end
+  end
+  return nil
+end
+
+local function applyPresetUpgradeEncoding(link, expectedCtx, targetTrack)
+  if not link then
+    return nil
+  end
+  local parts = splitItemPayload(link)
+  if not parts then
+    return nil
+  end
+  parts = padItemParts(parts, 16)
+  local detectedLayout = getUpgradeFieldLayout(parts)
+  local layouts = { detectedLayout }
+  for _, layout in ipairs(UPGRADE_LAYOUT_CANDIDATES) do
+    if layout.contextIndex ~= detectedLayout.contextIndex
+      or layout.numBonusIndex ~= detectedLayout.numBonusIndex then
+      layouts[#layouts + 1] = layout
+    end
+  end
+  local bindBonuses = collectBindBonusesFromParts(parts) or {}
+  for i, layout in ipairs(layouts) do
+    local merged = encodePresetUpgradeOnPartsWithLayout(
+      parts,
+      expectedCtx,
+      targetTrack,
+      layout,
+      i == 1 and bindBonuses or {}
+    )
+    if merged then
+      local rebuilt = rebuildItemLink(link, merged)
+      if rebuilt then
+        local crestBonusId = getPresetCrestBonusId(targetTrack)
+        if not targetTrack or (crestBonusId and linkContainsBonusId(rebuilt, crestBonusId)) then
+          primeItemInfo(rebuilt, tonumber(merged[2]))
+          return rebuilt
+        end
+      end
+    end
+  end
+  return nil
+end
+
+-- Raid/tier: preserve journal link structure; only patch creation context + crest bonus.
+local function applyRaidLootPreviewEncoding(link, expectedCtx, targetTrack)
+  if not link then
+    return nil
+  end
+  local parts = splitItemPayload(link)
+  if not parts or parts[1] ~= "item" then
+    return nil
+  end
+  local layout = getUpgradeFieldLayout(parts)
+  local crestId = getPresetCrestBonusId(targetTrack)
+  if not crestId then
+    return nil
+  end
+
+  if expectedCtx then
+    parts[layout.contextIndex] = tostring(expectedCtx)
+  end
+
+  local numBonus = tonumber(parts[layout.numBonusIndex]) or 0
+  if numBonus > 10 then
+    numBonus = 0
+  end
+
+  local replaced = false
+  if numBonus > 0 then
+    for i = 1, numBonus do
+      local idx = layout.firstBonusIndex + i - 1
+      local bid = tonumber(parts[idx])
+      if bid and NS.isCrestUpgradeBonusId(bid) then
+        parts[idx] = tostring(crestId)
+        replaced = true
+        break
+      end
+    end
+  end
+  if not replaced then
+    for i = layout.firstBonusIndex, #parts do
+      local bid = tonumber(parts[i])
+      if bid and NS.isCrestUpgradeBonusId(bid) then
+        parts[i] = tostring(crestId)
+        replaced = true
+        break
+      end
+    end
+  end
+  if not replaced then
+    numBonus = numBonus + 1
+    parts[layout.numBonusIndex] = tostring(numBonus)
+    parts[layout.firstBonusIndex + numBonus - 1] = tostring(crestId)
+  end
+
+  local rebuilt = rebuildItemLink(link, parts)
+  if not rebuilt then
+    return nil
+  end
+  primeItemInfo(rebuilt, tonumber(parts[2]))
   return rebuilt
 end
 
-local function graftItemUpgradeFields(journalLink, templateLink)
-  local journalParts = padItemParts(splitItemPayload(journalLink), 10)
-  local templateParts = padItemParts(splitItemPayload(templateLink), 11)
-  if not journalParts or not templateParts or journalParts[1] ~= "item" or templateParts[1] ~= "item" then
+local function replaceCrestBonusOnLink(link, bonusId)
+  if not link or not bonusId or not NS.isCrestUpgradeBonusId then
     return nil
   end
-
+  local parts = padItemParts(splitItemPayload(link), 14)
+  if not parts then
+    return nil
+  end
+  local bindBonuses = collectBindBonusesFromParts(parts) or {}
   local merged = {}
-  for i = 1, 10 do
-    merged[i] = journalParts[i] or ""
+  for i = 1, 12 do
+    merged[i] = parts[i] or ""
   end
-  for i = 11, #templateParts do
-    merged[i] = templateParts[i]
+  merged[13] = parts[13] or "0"
+  local allBonuses = {}
+  for _, bid in ipairs(bindBonuses) do
+    allBonuses[#allBonuses + 1] = tostring(bid)
   end
-
-  local rebuilt = rebuildItemLink(journalLink, merged)
-  if not rebuilt or rebuilt == journalLink then
+  allBonuses[#allBonuses + 1] = tostring(bonusId)
+  merged[14] = tostring(#allBonuses)
+  for i, bid in ipairs(allBonuses) do
+    merged[14 + i] = bid
+  end
+  local rebuilt = rebuildItemLink(link, merged)
+  if not rebuilt then
     return nil
   end
-  primeItemInfo(rebuilt, tonumber(journalParts[2]))
+  primeItemInfo(rebuilt, tonumber(merged[2]))
+  return rebuilt
+end
+
+local function applyUpgradeBonusIdToLink(link, bonusId)
+  if not link or not bonusId or not NS.isCrestUpgradeBonusId then
+    return nil
+  end
+  return replaceCrestBonusOnLink(link, bonusId)
+end
+
+-- Same-item journal encoding only; never graft upgrade fields from another item.
+local function linkHasExpectedCreationContext(link, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  if not link or not targetIlvl or targetIlvl <= 0 then
+    return false
+  end
+  local expectedCtx = getContextValueForIlvl(targetIlvl, instanceKind or "Dungeon", instanceId, instanceName, targetTrack)
+  if not expectedCtx then
+    return false
+  end
+  local parts = padItemParts(splitItemPayload(link), 14)
+  if not parts then
+    return false
+  end
+  local layout = getUpgradeFieldLayout(parts)
+  return tonumber(parts[layout.contextIndex]) == expectedCtx
+end
+
+local function linkHasExpectedCrestBonus(link, targetTrack)
+  if not link or not targetTrack then
+    return false
+  end
+  local expectedBonus = getPresetCrestBonusId(targetTrack)
+  return expectedBonus and linkContainsBonusId(link, expectedBonus) or false
+end
+
+local function getBareItemLink(itemID)
+  if not itemID or not (C_Item and C_Item.GetItemLinkByID) then
+    return nil
+  end
+  local ok, link = pcall(C_Item.GetItemLinkByID, itemID)
+  if ok and link and link ~= "" then
+    primeItemInfo(link, itemID)
+    return link
+  end
+  return nil
+end
+
+local function dungeonEncodedLinkReady(link, targetTrack)
+  if not link or not targetTrack or not linkHasOnlyExpectedCrestBonus(link, targetTrack) then
+    return false
+  end
+  local linkTrack = getUpgradeTrackFromLink(link)
+  if linkTrack then
+    return trackLabelsMatch(linkTrack, targetTrack)
+  end
+  return true
+end
+
+local function buildDungeonLootPreviewLink(journalLink, itemID, expectedCtx, targetTrack, apiLink)
+  if not itemID or not targetTrack or not expectedCtx then
+    return nil
+  end
+  local baseLink = apiLink
+  if (not baseLink or tonumber(baseLink:match("item:(%d+)")) ~= itemID)
+    and journalLink and tonumber(journalLink:match("item:(%d+)")) == itemID then
+    baseLink = journalLink
+  end
+  if not baseLink or tonumber(baseLink:match("item:(%d+)")) ~= itemID then
+    return nil
+  end
+
+  local encoded = applyDungeonPreviewEncoding(baseLink, expectedCtx, targetTrack)
+  if encoded and dungeonEncodedLinkPassesChecks(encoded, expectedCtx, targetTrack) then
+    primeItemInfo(encoded, itemID)
+    if dungeonEncodedLinkReady(encoded, targetTrack) then
+      return encoded
+    end
+    return encoded
+  end
+  return nil
+end
+
+local function isSporefallLoot(instanceKind, instanceId, instanceName)
+  return instanceKind == "Raid" and isSporefallInstance(instanceId, instanceName)
+end
+
+local function dungeonLootLinkStructurallyValid(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  if not link or not itemID then
+    return false
+  end
+  if tonumber(link:match("item:(%d+)")) ~= itemID then
+    return false
+  end
+  if targetTrack then
+    if linkHasOnlyExpectedCrestBonus(link, targetTrack) then
+      return true
+    end
+    return false
+  end
+  return linkHasExpectedCreationContext(link, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+end
+
+local function buildJournalLootPreviewLink(journalLink, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName, apiLink)
+  if not itemID or not targetIlvl or targetIlvl <= 0 then
+    return nil
+  end
+  local kind = instanceKind or "Dungeon"
+  local expectedCtx = getContextValueForIlvl(targetIlvl, kind, instanceId, instanceName, targetTrack)
+  if not expectedCtx then
+    return nil
+  end
+
+  -- Dungeon: patch API/journal upgrade encoding in-place (same crest model as raid).
+  if kind == "Dungeon" and targetTrack then
+    return buildDungeonLootPreviewLink(journalLink, itemID, expectedCtx, targetTrack, apiLink)
+  end
+
+  if not journalLink then
+    return nil
+  end
+
+  local journalParts = splitItemPayload(journalLink)
+  if not journalParts or journalParts[1] ~= "item" then
+    journalParts = nil
+  else
+    journalParts = padItemParts(journalParts, 16)
+  end
+
+  if journalParts and tostring(journalParts[2]) ~= tostring(itemID) then
+    -- Tier tokens: keep journal upgrade/bind encoding, swap only the item id.
+    journalParts[2] = tostring(itemID)
+    local swapped = rebuildItemLink(journalLink, journalParts)
+    if swapped then
+      journalLink = swapped
+      journalParts = padItemParts(splitItemPayload(journalLink), 16)
+    end
+  end
+
+  if not journalParts or journalParts[1] ~= "item" or tostring(journalParts[2]) ~= tostring(itemID) then
+    local fallbackLink = journalLink
+    if C_Item and C_Item.GetItemLinkByID then
+      local ok, base = pcall(C_Item.GetItemLinkByID, itemID)
+      if ok and base and base ~= "" then
+        fallbackLink = base
+      end
+    end
+    journalParts = padItemParts(splitItemPayload(fallbackLink), 16)
+    if not journalParts or journalParts[1] ~= "item" or tostring(journalParts[2]) ~= tostring(itemID) then
+      return nil
+    end
+    journalLink = fallbackLink
+  end
+
+  local rebuilt = applyPresetUpgradeEncoding(journalLink, expectedCtx, targetTrack)
+  if not rebuilt then
+    return nil
+  end
+
+  primeItemInfo(rebuilt, itemID)
   return rebuilt
 end
 
@@ -1218,22 +1829,7 @@ local function readLinkIlvl(link, itemID)
   return 0
 end
 
-local function getEquipLocForLink(link, itemID)
-  local _, _, _, _, _, _, equipLoc = GetItemInfo(link)
-  if equipLoc and equipLoc ~= "" then
-    return equipLoc
-  end
-  itemID = itemID or tonumber(link and link:match("item:(%d+)"))
-  if itemID and GetItemInfoInstant then
-    _, _, _, equipLoc = GetItemInfoInstant(itemID)
-    if equipLoc and equipLoc ~= "" then
-      return equipLoc
-    end
-  end
-  return nil
-end
-
-local function markTrustedPreviewLink(itemID, targetIlvl, link)
+local function markTrustedPreviewLink(itemID, targetIlvl, targetTrack, link)
   if not itemID or not targetIlvl or not link then
     return
   end
@@ -1242,35 +1838,30 @@ local function markTrustedPreviewLink(itemID, targetIlvl, link)
     perItem = {}
     authoritativePreviewCache[itemID] = perItem
   end
-  perItem[targetIlvl] = link
+  perItem[previewTrackCacheKey(targetIlvl, targetTrack)] = link
 end
 
-local function isTrustedPreviewLink(itemID, targetIlvl, link)
+local function isTrustedPreviewLink(itemID, targetIlvl, targetTrack, link)
   if not itemID or not targetIlvl or not link then
     return false
   end
   local perItem = authoritativePreviewCache[itemID]
-  return perItem and perItem[targetIlvl] == link
+  return perItem and perItem[previewTrackCacheKey(targetIlvl, targetTrack)] == link
 end
 
-local function previewLinkPassesTrackCheck(link, targetIlvl, targetTrack)
-  if targetTrack and AMBIGUOUS_TRACK_ILVLS[targetIlvl] then
-    return trackLabelsMatch(getUpgradeTrackFromLink(link), targetTrack)
-  end
-  return true
-end
-
-local function registerResolvedPreviewLink(itemID, link, instanceKind, ilvlOverride)
+local function registerResolvedPreviewLink(itemID, link, instanceKind, ilvlOverride, targetTrack, forceIlvlOverride)
   if not itemID or not link then
     return
   end
   local measured = readLinkIlvl(link, itemID)
   local ilvl = measured > 0 and measured or (ilvlOverride or 0)
+  if forceIlvlOverride and ilvlOverride and ilvlOverride > 0 then
+    ilvl = ilvlOverride
+  elseif measured > 0 and ilvlOverride and ilvlOverride > 0 and measured ~= ilvlOverride then
+    ilvl = measured
+  end
   if not ilvl or ilvl <= 0 then
     return
-  end
-  if measured > 0 and ilvlOverride and ilvlOverride > 0 and measured ~= ilvlOverride then
-    ilvl = measured
   end
 
   local perItem = itemIlvlPreviewCache[itemID]
@@ -1278,81 +1869,87 @@ local function registerResolvedPreviewLink(itemID, link, instanceKind, ilvlOverr
     perItem = {}
     itemIlvlPreviewCache[itemID] = perItem
   end
-  perItem[ilvl] = link
+  local actualTrack = getUpgradeTrackFromLink(link)
+  local cacheTrack = actualTrack or targetTrack
+  if cacheTrack or not AMBIGUOUS_TRACK_ILVLS[ilvl] then
+    perItem[previewTrackCacheKey(ilvl, cacheTrack)] = link
+  end
+  if not AMBIGUOUS_TRACK_ILVLS[ilvl] and not targetTrack then
+    perItem[previewTrackCacheKey(ilvl, nil)] = link
+  end
+end
 
+getContextValueForIlvl = function(targetIlvl, instanceKind, instanceId, instanceName, targetTrack)
+  local enumName
   local kind = instanceKind or "Dungeon"
-  local kindKey = string.format("%d:%s", ilvl, kind)
-  if not trackIlvlTemplateCache[kindKey] then
-    trackIlvlTemplateCache[kindKey] = link
-  end
-  local anyKindKey = tostring(ilvl)
-  if not trackIlvlTemplateCache[anyKindKey] then
-    trackIlvlTemplateCache[anyKindKey] = link
-  end
-
-  local list = ilvlTemplateList[ilvl]
-  if not list then
-    list = {}
-    ilvlTemplateList[ilvl] = list
-  end
-  local seen = false
-  for _, existing in ipairs(list) do
-    if existing == link then
-      seen = true
-      break
+  if targetTrack and not isSporefallInstance(instanceId, instanceName) then
+    if kind == "Dungeon" or kind == "Raid" then
+      -- Per-rank contexts distinguish Myth 1-6; RaidMythic alone cannot.
+      enumName = getPresetDungeonContextEnum(targetTrack)
     end
   end
-  if not seen then
-    table.insert(list, link)
+  if not enumName then
+    enumName = getStaticContextForIlvl(targetIlvl, kind, instanceId, instanceName)
   end
-
-  local _, _, _, _, _, _, equipLoc = GetItemInfo(link)
-  if equipLoc and equipLoc ~= "" then
-    local bySlot = slotTemplateCache[ilvl]
-    if not bySlot then
-      bySlot = {}
-      slotTemplateCache[ilvl] = bySlot
-    end
-    if not bySlot[equipLoc] then
-      bySlot[equipLoc] = link
-    end
-  end
-end
-
-local function getCachedPreviewLink(itemID, targetIlvl)
-  local perItem = itemID and itemIlvlPreviewCache[itemID]
-  return perItem and perItem[targetIlvl] or nil
-end
-
-local function getTrackIlvlTemplate(targetIlvl, instanceKind)
-  local kind = instanceKind or "Dungeon"
-  return trackIlvlTemplateCache[string.format("%d:%s", targetIlvl, kind)]
-    or trackIlvlTemplateCache[tostring(targetIlvl)]
-end
-
-local function getLinkCreationContext(link)
-  local parts = splitItemPayload(link)
-  return parts and tonumber(parts[13]) or nil
-end
-
-getContextValueForIlvl = function(targetIlvl, instanceKind, instanceId, instanceName)
-  local enumName = getStaticContextForIlvl(targetIlvl, instanceKind, instanceId, instanceName)
   if not enumName then
     return nil
   end
   return getCreationContextValue(enumName, CONTEXT_ENUM_FALLBACK[enumName])
 end
 
-local function linkContextMatchesTargetIlvl(link, targetIlvl, instanceKind)
-  if not link or not targetIlvl or not instanceKind then
-    return false
+previewLinkPassesTrackCheck = function(link, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  if not targetTrack then
+    return true
   end
-  local linkCtx = getLinkCreationContext(link)
-  local expectedCtx = getContextValueForIlvl(targetIlvl, instanceKind)
-  return linkCtx ~= nil and expectedCtx ~= nil and linkCtx == expectedCtx
+  if linkHasExpectedCrestBonus(link, targetTrack) then
+    return true
+  end
+  local linkTrack = getUpgradeTrackFromLink(link)
+  if linkTrack then
+    return trackLabelsMatch(linkTrack, targetTrack)
+  end
+  return false
 end
 
-local function acceptsPreviewLinkForTarget(link, targetIlvl, targetTrack, itemID, instanceKind)
+local function lootPreviewLinkMatchesPresetTrack(link, targetTrack)
+  if not link or not targetTrack then
+    return true
+  end
+  if linkHasExpectedCrestBonus(link, targetTrack) then
+    return true
+  end
+  local linkTrack = getUpgradeTrackFromLink(link)
+  return linkTrack and trackLabelsMatch(linkTrack, targetTrack) or false
+end
+
+local function lootPreviewHasScoringStats(link, itemID)
+  if not link or not NS.statsFromItemLink then
+    return false
+  end
+  if itemID then
+    local linkItemID = tonumber(link:match("item:(%d+)"))
+    if linkItemID and linkItemID ~= itemID then
+      return false
+    end
+  end
+  return NS.statsFromItemLink(link) ~= nil
+end
+
+local function lootPreviewAcceptableForUse(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  if not link or tonumber(link:match("item:(%d+)")) ~= itemID then
+    return false
+  end
+  if isSporefallLoot(instanceKind, instanceId, instanceName) and not targetTrack then
+    if lootPreviewHasScoringStats(link, itemID) then
+      return true
+    end
+    local measured = readLinkIlvl(link, itemID)
+    return measured > 0 and (not targetIlvl or targetIlvl <= 0 or measured == targetIlvl)
+  end
+  return dungeonLootLinkStructurallyValid(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+end
+
+local function apiLootLinkAcceptable(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
   if not link or not targetIlvl or targetIlvl <= 0 then
     return false
   end
@@ -1362,208 +1959,56 @@ local function acceptsPreviewLinkForTarget(link, targetIlvl, targetTrack, itemID
       return false
     end
   end
-  if isTrustedPreviewLink(itemID, targetIlvl, link) then
-    return previewLinkPassesTrackCheck(link, targetIlvl, targetTrack)
-  end
+  local kind = instanceKind or "Dungeon"
   primeItemInfo(link, itemID or tonumber(link:match("item:(%d+)")))
-  if readLinkIlvl(link, itemID) ~= targetIlvl then
+  if kind == "Dungeon" and targetTrack and linkHasExpectedCrestBonus(link, targetTrack) then
+    return true
+  end
+  if isSporefallLoot(kind, instanceId, instanceName) and not targetTrack then
+    return lootPreviewAcceptableForUse(link, itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)
+  end
+  if targetTrack and not lootPreviewLinkMatchesPresetTrack(link, targetTrack) then
     return false
   end
-  return previewLinkPassesTrackCheck(link, targetIlvl, targetTrack)
-end
-
-local function previewLinkUsableForScoring(link, targetIlvl, targetTrack, itemID, instanceKind)
-  return acceptsPreviewLinkForTarget(link, targetIlvl, targetTrack, itemID, instanceKind)
-end
-
-local function tryAuthoritativePreviewContext(itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
-  if not itemID or not targetIlvl or targetIlvl <= 0 then
-    return nil
+  if linkHasExpectedCreationContext(link, targetIlvl, targetTrack, kind, instanceId, instanceName)
+    and (not targetTrack or linkHasExpectedCrestBonus(link, targetTrack)) then
+    if lootPreviewHasScoringStats(link, itemID) then
+      return true
+    end
+    if targetTrack and getLootPresetCrestStep(targetTrack) then
+      return true
+    end
   end
-  local expectedCtx = getContextValueForIlvl(targetIlvl, instanceKind, instanceId, instanceName)
-  if not expectedCtx then
-    return nil
+  if lootPreviewHasScoringStats(link, itemID) then
+    local measured = readLinkIlvl(link, itemID)
+    if measured > 0 and measured ~= targetIlvl and measured >= 200 then
+      return false
+    end
+    return previewLinkPassesTrackCheck(link, targetIlvl, targetTrack, kind, instanceId, instanceName)
   end
-  local link = getPreviewLinkForContext(itemID, expectedCtx)
-  if not link then
-    return nil
-  end
-  primeItemInfo(link, itemID)
   local measured = readLinkIlvl(link, itemID)
-  if measured == targetIlvl then
-    registerResolvedPreviewLink(itemID, link, instanceKind, targetIlvl)
-    markTrustedPreviewLink(itemID, targetIlvl, link)
-    if previewLinkPassesTrackCheck(link, targetIlvl, targetTrack) then
-      return link
-    end
-    return nil
-  end
-  if measured > 0 then
-    return nil
-  end
-  if not linkContextMatchesTargetIlvl(link, targetIlvl, instanceKind) then
-    return nil
-  end
-  registerResolvedPreviewLink(itemID, link, instanceKind, targetIlvl)
-  markTrustedPreviewLink(itemID, targetIlvl, link)
-  if previewLinkPassesTrackCheck(link, targetIlvl, targetTrack) then
-    return link
-  end
-  return nil
-end
-
-local function linkUpgradeEncodingMatchesTemplate(candidate, templateLink)
-  local candParts = splitItemPayload(candidate)
-  local tmplParts = splitItemPayload(templateLink)
-  if not candParts or not tmplParts then
+  if measured > 0 and measured ~= targetIlvl then
     return false
   end
-  for i = 11, math.max(#tmplParts, 13) do
-    if (candParts[i] or "") ~= (tmplParts[i] or "") then
-      return false
-    end
-  end
-  return true
+  return previewLinkPassesTrackCheck(link, targetIlvl, targetTrack, kind, instanceId, instanceName)
 end
 
-local function linkEncodingMatchesTemplate(candidate, templateLink, journalItemID)
-  local candParts = splitItemPayload(candidate)
-  local tmplParts = splitItemPayload(templateLink)
-  if not candParts or not tmplParts or candParts[1] ~= "item" or tmplParts[1] ~= "item" then
-    return false
-  end
-  if journalItemID and tostring(candParts[2]) ~= tostring(journalItemID) then
-    return false
-  end
-  local maxLen = math.max(#tmplParts, 13)
-  for i = 3, maxLen do
-    if (candParts[i] or "") ~= (tmplParts[i] or "") then
-      return false
-    end
-  end
-  return true
+local function lootPreviewLinkMatchesTarget(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName, _journalLink)
+  return apiLootLinkAcceptable(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
 end
 
-local function linkMatchesPreviewTarget(link, targetIlvl, targetTrack, itemID, instanceKind)
-  return acceptsPreviewLinkForTarget(link, targetIlvl, targetTrack, itemID, instanceKind)
+local function acceptsPreviewLinkForTarget(link, targetIlvl, targetTrack, itemID, instanceKind, instanceId, instanceName)
+  return lootPreviewLinkMatchesTarget(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
 end
 
-local function validatePreviewLink(link, targetIlvl, targetTrack, itemID, instanceKind)
-  return acceptsPreviewLinkForTarget(link, targetIlvl, targetTrack, itemID, instanceKind)
-end
-
-local function templateValidForTarget(templateLink, targetIlvl, targetTrack, instanceKind)
-  return acceptsPreviewLinkForTarget(templateLink, targetIlvl, targetTrack, nil, instanceKind)
-end
-
-local function findOwnedItemLocation(itemID)
-  if not itemID or not ItemLocation then
-    return nil, nil
+local function previewLinkUsableForScoring(link, targetIlvl, targetTrack, itemID, instanceKind, instanceId, instanceName)
+  if lootPreviewAcceptableForUse(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName) then
+    return true
   end
-
-  local slotIds = { 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17 }
-  for _, slotId in ipairs(slotIds) do
-    local slotName = NS.SLOT_ID_TO_NAME and NS.SLOT_ID_TO_NAME[slotId]
-    if slotName then
-      local invSlot = GetInventorySlotInfo(slotName)
-      if invSlot then
-        local link = GetInventoryItemLink("player", invSlot)
-        local linkItemID = link and tonumber(link:match("item:(%d+)"))
-        if linkItemID == itemID then
-          return ItemLocation:CreateFromEquipmentSlot(invSlot), link
-        end
-      end
-    end
+  if acceptsPreviewLinkForTarget(link, targetIlvl, targetTrack, itemID, instanceKind, instanceId, instanceName) then
+    return true
   end
-
-  if C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemInfo then
-    for bag = 0, 4 do
-      for slot = 1, C_Container.GetContainerNumSlots(bag) do
-        local info = C_Container.GetContainerItemInfo(bag, slot)
-        local link = info and info.hyperlink
-        local linkItemID = link and tonumber(link:match("item:(%d+)"))
-        if linkItemID == itemID then
-          return ItemLocation:CreateFromBagAndSlot(bag, slot), link
-        end
-      end
-    end
-  end
-
-  return nil, nil
-end
-
-local function previewOwnedItemPlusOneLink(itemID, targetIlvl, targetTrack, instanceKind)
-  if not (C_ItemUpgrade and C_ItemUpgrade.SetItemUpgradeFromLocation and C_ItemUpgrade.GetItemHyperlink) then
-    return nil
-  end
-
-  local itemLocation = findOwnedItemLocation(itemID)
-  if not itemLocation then
-    return nil
-  end
-  if C_ItemUpgrade.CanUpgradeItem and not C_ItemUpgrade.CanUpgradeItem(itemLocation) then
-    return nil
-  end
-  if not pcall(C_ItemUpgrade.SetItemUpgradeFromLocation, itemLocation) then
-    return nil
-  end
-
-  local candidate
-  local okLink, upgradedLink = pcall(C_ItemUpgrade.GetItemHyperlink)
-  if okLink and type(upgradedLink) == "string" and upgradedLink ~= "" then
-    candidate = upgradedLink
-  end
-
-  if C_ItemUpgrade.ClearItemUpgrade then
-    pcall(C_ItemUpgrade.ClearItemUpgrade)
-  end
-
-  if candidate and validatePreviewLink(candidate, targetIlvl, targetTrack, itemID, instanceKind) then
-    registerResolvedPreviewLink(itemID, candidate, instanceKind)
-    return candidate
-  end
-  return nil
-end
-
-local function synthesizePreviewLink(journalLink, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
-  if not journalLink or not itemID or not targetIlvl or targetIlvl <= 0 then
-    return nil
-  end
-
-  local cacheKey = string.format(
-    "%d:synth:%d:%s:%s:%s",
-    itemID,
-    targetIlvl,
-    instanceKind or "Dungeon",
-    targetTrack or "",
-    isSporefallInstance(instanceId, instanceName) and "sf" or "std"
-  )
-  if previewLinkCache[cacheKey] ~= nil then
-    local cached = previewLinkCache[cacheKey]
-    return cached ~= false and cached or nil
-  end
-
-  local resolved = tryAuthoritativePreviewContext(itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
-  if not resolved then
-    local cached = getCachedPreviewLink(itemID, targetIlvl)
-    if cached and acceptsPreviewLinkForTarget(cached, targetIlvl, targetTrack, itemID, instanceKind) then
-      resolved = cached
-    end
-  end
-  if not resolved then
-    resolved = previewOwnedItemPlusOneLink(itemID, targetIlvl, targetTrack, instanceKind)
-  end
-
-  if resolved and not isTrustedPreviewLink(itemID, targetIlvl, resolved)
-    and readLinkIlvl(resolved, itemID) == targetIlvl then
-    markTrustedPreviewLink(itemID, targetIlvl, resolved)
-  end
-
-  previewLinkCache[cacheKey] = resolved or false
-  if resolved then
-    registerResolvedPreviewLink(itemID, resolved, instanceKind, targetIlvl)
-  end
-  return resolved
+  return false
 end
 
 -- Midnight S1 ilvl -> preferred ItemCreationContext (dungeon / raid).
@@ -1583,6 +2028,44 @@ local STATIC_DUNGEON_ILVL_CONTEXT = {
   [285] = "DungeonBonus_8",
   [289] = "DungeonBonus_9",
 }
+
+-- Shared ilvls map to different creation contexts depending on track.
+local PRESET_DUNGEON_CONTEXT = {
+  champion_1 = "DungeonMythic",
+  champion_2 = "ChallengeMode_1",
+  champion_3 = "ChallengeMode_2",
+  champion_4 = "ChallengeMode_3",
+  champion_5 = "DungeonLevelUp_Champion5",
+  champion_6 = "DungeonLevelUp_Champion6",
+  hero_1 = "ChallengeMode_4",
+  hero_2 = "DungeonBonus_1",
+  hero_3 = "DungeonBonus_2",
+  hero_4 = "DungeonBonus_3",
+  hero_5 = "DungeonLevelUp_Hero5",
+  hero_6 = "DungeonLevelUp_Hero6",
+  myth_1 = "DungeonBonus_4",
+  myth_2 = "DungeonBonus_5",
+  myth_3 = "DungeonBonus_6",
+  myth_4 = "DungeonBonus_7",
+  myth_5 = "DungeonBonus_8",
+  myth_6 = "DungeonBonus_9",
+}
+
+trackToPresetKey = function(track)
+  local normalized = (track or ""):lower()
+  local tier, rank = normalized:match("([a-z]+)%s*(%d+)")
+  if tier and rank then
+    return tier .. "_" .. rank
+  end
+  return normalized:gsub("%s+", "_"):gsub("/.*", "")
+end
+
+getPresetDungeonContextEnum = function(targetTrack)
+  if not targetTrack then
+    return nil
+  end
+  return PRESET_DUNGEON_CONTEXT[trackToPresetKey(targetTrack)]
+end
 
 local STATIC_RAID_ILVL_CONTEXT = {
   [246] = "RaidNormal",
@@ -1608,26 +2091,6 @@ local STATIC_SPOREFALL_ILVL_CONTEXT = {
   [298] = "RaidMythic",
 }
 
-local function ensureIlvlByContextEnum()
-  if ILVL_BY_CONTEXT_ENUM then
-    return ILVL_BY_CONTEXT_ENUM
-  end
-  ILVL_BY_CONTEXT_ENUM = { Dungeon = {}, Raid = {} }
-  for ilvl, enumName in pairs(STATIC_DUNGEON_ILVL_CONTEXT) do
-    ILVL_BY_CONTEXT_ENUM.Dungeon[enumName] = ilvl
-  end
-  for ilvl, enumName in pairs(STATIC_RAID_ILVL_CONTEXT) do
-    ILVL_BY_CONTEXT_ENUM.Raid[enumName] = ilvl
-  end
-  return ILVL_BY_CONTEXT_ENUM
-end
-
-local function getIlvlForContextEnum(enumName, instanceKind)
-  local maps = ensureIlvlByContextEnum()
-  local kind = instanceKind == "Raid" and "Raid" or "Dungeon"
-  return maps[kind][enumName]
-end
-
 -- Midnight S1 upgrade track item levels (ranks 1/6 through 6/6).
 local UPGRADE_TRACK_ILVLS = {
   Champion = { 246, 250, 253, 256, 259, 263 },
@@ -1636,15 +2099,6 @@ local UPGRADE_TRACK_ILVLS = {
 }
 
 local UPGRADE_TRACK_ORDER = { "Champion", "Hero", "Myth" }
-
-local function trackToPresetKey(track)
-  local normalized = (track or ""):lower()
-  local tier, rank = normalized:match("([a-z]+)%s*(%d+)")
-  if tier and rank then
-    return tier .. "_" .. rank
-  end
-  return normalized:gsub("%s+", "_"):gsub("/.*", "")
-end
 
 local function formatPresetLabel(track, ilvl)
   if track and track ~= "" and ilvl and ilvl > 0 then
@@ -1680,162 +2134,11 @@ CONTEXT_ENUM_FALLBACK = {
   RaidFinder = 4,
   RaidHeroic = 5,
   RaidMythic = 6,
+  DungeonLevelUp_Champion5 = 201,
+  DungeonLevelUp_Champion6 = 202,
+  DungeonLevelUp_Hero5 = 203,
+  DungeonLevelUp_Hero6 = 204,
 }
-
-local FALLBACK_PREVIEW_CONTEXTS = {
-  { enumName = "ChallengeMode_1", value = 16 },
-  { enumName = "ChallengeMode_2", value = 33 },
-  { enumName = "ChallengeMode_3", value = 34 },
-  { enumName = "ChallengeMode_4", value = 87 },
-  { enumName = "ChallengeModeJackpot", value = 35 },
-  { enumName = "DungeonBonus_1", value = 139 },
-  { enumName = "DungeonBonus_2", value = 140 },
-  { enumName = "DungeonBonus_3", value = 141 },
-  { enumName = "DungeonBonus_4", value = 142 },
-  { enumName = "DungeonBonus_5", value = 143 },
-  { enumName = "DungeonBonus_6", value = 144 },
-  { enumName = "RaidNormal", value = 3 },
-  { enumName = "RaidHeroic", value = 5 },
-  { enumName = "RaidMythic", value = 6 },
-}
-
-local function collectPreviewContexts(instanceKind)
-  local contexts = {}
-  local seen = {}
-  local prefix = instanceKind == "Raid" and "^Raid" or nil
-
-  if Enum and Enum.ItemCreationContext then
-    for name, value in pairs(Enum.ItemCreationContext) do
-      if type(name) == "string" and type(value) == "number" and not seen[value] then
-        local include = false
-        if prefix then
-          include = name:find(prefix, 1) ~= nil
-        else
-          include = name:find("^ChallengeMode", 1)
-            or name:find("^DungeonBonus_", 1)
-            or name:find("^DungeonLevelUp_", 1)
-            or name == "DungeonMythic"
-        end
-        if include then
-          seen[value] = true
-          table.insert(contexts, { enumName = name, value = value })
-        end
-      end
-    end
-    table.sort(contexts, function(a, b)
-      return a.value < b.value
-    end)
-  end
-
-  if #contexts == 0 then
-    contexts = FALLBACK_PREVIEW_CONTEXTS
-  end
-  return contexts
-end
-
-local function collectAllPreviewContexts()
-  local contexts = {}
-  local seen = {}
-  if Enum and Enum.ItemCreationContext then
-    for name, value in pairs(Enum.ItemCreationContext) do
-      if type(name) == "string" and type(value) == "number" and value > 0 and not seen[value] then
-        seen[value] = true
-        table.insert(contexts, { enumName = name, value = value })
-      end
-    end
-    table.sort(contexts, function(a, b)
-      return a.value < b.value
-    end)
-  end
-  if #contexts == 0 then
-    contexts = FALLBACK_PREVIEW_CONTEXTS
-  end
-  return contexts
-end
-
-getPreviewLinkForContext = function(itemID, creationContext)
-  if not itemID or not creationContext or not (C_Item and C_Item.GetDelvePreviewItemLink) then
-    return nil
-  end
-  local ok, link = pcall(C_Item.GetDelvePreviewItemLink, itemID, creationContext)
-  if ok and type(link) == "string" and link ~= "" then
-    primeItemInfo(link, itemID)
-    return link
-  end
-  return nil
-end
-
-local function findMeasuredPreviewLinkForIlvl(itemID, targetIlvl, targetTrack, instanceKind)
-  if not itemID or not targetIlvl or targetIlvl <= 0 then
-    return nil
-  end
-
-  local contexts = collectAllPreviewContexts()
-  for _, ctx in ipairs(collectPreviewContexts(instanceKind)) do
-    contexts[#contexts + 1] = ctx
-  end
-  local seenCtx = {}
-  for _, ctx in ipairs(contexts) do
-    local creationContext = getCreationContextValue(ctx.enumName, ctx.value or CONTEXT_ENUM_FALLBACK[ctx.enumName])
-    if creationContext and not seenCtx[creationContext] then
-      seenCtx[creationContext] = true
-      local link = getPreviewLinkForContext(itemID, creationContext)
-      if link and tonumber(link:match("item:(%d+)")) == itemID then
-        local measured = readLinkIlvl(link, itemID)
-        if measured == targetIlvl and previewLinkPassesTrackCheck(link, targetIlvl, targetTrack) then
-          registerResolvedPreviewLink(itemID, link, instanceKind, targetIlvl)
-          markTrustedPreviewLink(itemID, targetIlvl, link)
-          return link
-        end
-      end
-    end
-  end
-  return nil
-end
-
-local function probeItemPreviewContexts(itemID, instanceKind)
-  if not itemID then
-    return
-  end
-  local contexts = collectAllPreviewContexts()
-  for _, ctx in ipairs(collectPreviewContexts(instanceKind)) do
-    contexts[#contexts + 1] = ctx
-  end
-  local seenCtx = {}
-  for _, ctx in ipairs(contexts) do
-    local creationContext = getCreationContextValue(ctx.enumName, ctx.value or CONTEXT_ENUM_FALLBACK[ctx.enumName])
-    if creationContext and not seenCtx[creationContext] then
-      seenCtx[creationContext] = true
-      local link = getPreviewLinkForContext(itemID, creationContext)
-      if link then
-        local measured = readLinkIlvl(link, itemID)
-        if measured > 0 then
-          registerResolvedPreviewLink(itemID, link, instanceKind)
-        end
-      end
-    end
-  end
-end
-
-local function searchPreviewContexts(itemID, targetIlvl, contextList, instanceKind, targetTrack)
-  for _, ctx in ipairs(contextList or {}) do
-    local creationContext = getCreationContextValue(ctx.enumName, ctx.value or CONTEXT_ENUM_FALLBACK[ctx.enumName])
-    if creationContext then
-      local link = getPreviewLinkForContext(itemID, creationContext)
-      if link then
-        local measured = readLinkIlvl(link, itemID)
-        if measured > 0 then
-          registerResolvedPreviewLink(itemID, link, instanceKind)
-        end
-        if measured == targetIlvl and previewLinkPassesTrackCheck(link, targetIlvl, targetTrack) then
-          markTrustedPreviewLink(itemID, targetIlvl, link)
-          return link
-        end
-      end
-    end
-  end
-  return nil
-end
 
 getStaticContextForIlvl = function(targetIlvl, instanceKind, instanceId, instanceName)
   if instanceKind == "Raid" and isSporefallInstance(instanceId, instanceName) then
@@ -1845,127 +2148,259 @@ getStaticContextForIlvl = function(targetIlvl, instanceKind, instanceId, instanc
   return map[targetIlvl]
 end
 
-graftItemWithTargetContext = function(journalLink, templateLink, targetIlvl, instanceKind)
-  local grafted = graftItemIdentity(journalLink, templateLink)
-  if not grafted then
-    grafted = graftItemUpgradeFields(journalLink, templateLink)
-  end
-  if not grafted then
+getPreviewLinkForContext = function(itemID, creationContext, enumName)
+  if not itemID or not creationContext or not (C_Item and C_Item.GetDelvePreviewItemLink) then
     return nil
   end
-  local expectedCtx = getContextValueForIlvl(targetIlvl, instanceKind)
-  if not expectedCtx then
-    return grafted
+  local ctx = creationContext
+  if enumName and Enum and Enum.ItemCreationContext and Enum.ItemCreationContext[enumName] ~= nil then
+    ctx = Enum.ItemCreationContext[enumName]
   end
-  local parts = padItemParts(splitItemPayload(grafted), 13)
-  parts[13] = tostring(expectedCtx)
-  local rebuilt = rebuildItemLink(grafted, parts)
-  if not rebuilt then
-    return grafted
+  local ok, link = pcall(C_Item.GetDelvePreviewItemLink, itemID, ctx)
+  if ok and type(link) == "string" and link ~= "" then
+    primeItemInfo(link, itemID)
+    return link
   end
-  primeItemInfo(rebuilt, tonumber(parts[2]))
-  return rebuilt
+  return nil
 end
 
-local function findPreviewLinkForIlvl(itemID, targetIlvl, instanceKind, targetTrack, instanceId, instanceName)
-  if not itemID or not targetIlvl or targetIlvl <= 0 then
-    return nil
-  end
-
+local function previewLinkCacheKey(itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
   local kind = instanceKind or "Dungeon"
-  local cacheKey = string.format(
-    "%d:ilvl:%d:%s:%s:%s",
-    itemID,
-    targetIlvl,
+  return string.format(
+    "%d:api:%d:%s:%s:%s",
+    itemID or 0,
+    targetIlvl or 0,
     kind,
     targetTrack or "",
     isSporefallInstance(instanceId, instanceName) and "sf" or "std"
   )
-  if previewLinkCache[cacheKey] ~= nil then
-    local cached = previewLinkCache[cacheKey]
-    return cached ~= false and cached or nil
-  end
-
-  local link
-  link = tryAuthoritativePreviewContext(itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)
-  if not link then
-    link = findMeasuredPreviewLinkForIlvl(itemID, targetIlvl, targetTrack, kind)
-  end
-  if not link then
-    local staticEnum = getStaticContextForIlvl(targetIlvl, kind, instanceId, instanceName)
-    if staticEnum then
-      link = searchPreviewContexts(itemID, targetIlvl, { { enumName = staticEnum, value = CONTEXT_ENUM_FALLBACK[staticEnum] } }, kind, targetTrack)
-    end
-  end
-  if not link then
-    link = searchPreviewContexts(itemID, targetIlvl, collectPreviewContexts(kind), kind, targetTrack)
-  end
-  if not link and kind == "Raid" then
-    link = searchPreviewContexts(itemID, targetIlvl, collectPreviewContexts("Dungeon"), kind, targetTrack)
-  elseif not link and kind ~= "Raid" then
-    link = searchPreviewContexts(itemID, targetIlvl, collectPreviewContexts("Raid"), kind, targetTrack)
-  end
-  if not link then
-    link = searchPreviewContexts(itemID, targetIlvl, collectAllPreviewContexts(), kind, targetTrack)
-  end
-
-  previewLinkCache[cacheKey] = link or false
-  return link
 end
 
-local function findPreviewLinkForIlvlWithJournal(journalLink, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
-  local resolveKey = string.format(
-    "%d:resolve:%d:%s:%s:%s",
-    itemID or 0,
-    targetIlvl or 0,
-    instanceKind or "Dungeon",
-    targetTrack or "",
-    isSporefallInstance(instanceId, instanceName) and "sf" or "std"
-  )
-  if previewLinkCache[resolveKey] ~= nil then
-    local cached = previewLinkCache[resolveKey]
-    return cached ~= false and cached or nil
+local function clearPreviewCacheMiss(itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  if not itemID then
+    return
+  end
+  previewLinkCache[previewLinkCacheKey(itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)] = nil
+end
+
+local function finalizeResolvedLootPreviewLink(itemID, scoreLink, displayLink, targetIlvl, targetTrack, instanceKind, instanceId, instanceName, expectedCtx)
+  local kind = instanceKind or "Dungeon"
+  previewContextHintCache[previewContextHintKey(targetIlvl, kind, targetTrack)] = expectedCtx
+  registerResolvedPreviewLink(itemID, scoreLink, kind, targetIlvl, targetTrack)
+  markTrustedPreviewLink(itemID, targetIlvl, targetTrack, scoreLink)
+  previewLinkCache[previewLinkCacheKey(itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)] = {
+    score = scoreLink,
+    display = displayLink or scoreLink,
+  }
+  return scoreLink, displayLink or scoreLink
+end
+
+local function pickLootDisplayPreviewLink(apiLink, scoreLink, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  local kind = instanceKind or "Dungeon"
+  if scoreLink and (kind == "Dungeon" or kind == "Raid") then
+    return scoreLink
+  end
+  if apiLink and itemID and targetIlvl and targetIlvl > 0
+    and tonumber(apiLink:match("item:(%d+)")) == itemID
+    and targetTrack and linkHasExpectedCrestBonus(apiLink, targetTrack)
+    and readLinkIlvl(apiLink, itemID) == targetIlvl then
+    return apiLink
+  end
+  return scoreLink
+end
+
+local function resolveApiLootPreviewLink(itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName, journalLink)
+  if not itemID or not targetIlvl or targetIlvl <= 0 then
+    return nil, nil
+  end
+
+  local kind = instanceKind or "Dungeon"
+  local cacheKey = previewLinkCacheKey(itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)
+  if previewLinkCache[cacheKey] ~= nil then
+    local cached = previewLinkCache[cacheKey]
+    if type(cached) == "table" then
+      local scoreOk = cached.score
+        and lootPreviewAcceptableForUse(cached.score, itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)
+      if scoreOk then
+        return cached.score, cached.display or cached.score
+      end
+      previewLinkCache[cacheKey] = nil
+    else
+      return nil, nil
+    end
   end
 
   primeItemInfo(journalLink, itemID)
 
-  local resolved
-  resolved = tryAuthoritativePreviewContext(itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
-
-  if not resolved then
-    resolved = findMeasuredPreviewLinkForIlvl(itemID, targetIlvl, targetTrack, instanceKind)
+  local expectedCtx = getContextValueForIlvl(targetIlvl, kind, instanceId, instanceName, targetTrack)
+  if not expectedCtx then
+    return nil, nil
   end
 
-  if not resolved and journalLink and linkMatchesPreviewTarget(journalLink, targetIlvl, targetTrack, itemID, instanceKind) then
-    resolved = journalLink
+  local contextEnumName
+  if kind == "Dungeon" or kind == "Raid" then
+    contextEnumName = getPresetDungeonContextEnum(targetTrack)
   end
+  if not contextEnumName then
+    contextEnumName = getStaticContextForIlvl(targetIlvl, kind, instanceId, instanceName)
+  end
+  local apiLink = getPreviewLinkForContext(itemID, expectedCtx, contextEnumName)
 
-  if not resolved then
-    local journalParts = splitItemPayload(journalLink)
-    if journalParts then
-      local journalContext = tonumber(journalParts[13])
-      if journalContext and journalContext > 0 then
-        local contextualLink = getPreviewLinkForContext(itemID, journalContext)
-        if contextualLink and acceptsPreviewLinkForTarget(contextualLink, targetIlvl, targetTrack, itemID, instanceKind) then
-          resolved = contextualLink
-        end
+  if isSporefallLoot(kind, instanceId, instanceName) and not targetTrack then
+    local baseLink = apiLink or journalLink or getBareItemLink(itemID)
+    if baseLink then
+      local built = applyPresetUpgradeEncoding(baseLink, expectedCtx, nil)
+      if built then
+        return finalizeResolvedLootPreviewLink(
+          itemID, built, built, targetIlvl, targetTrack, kind, instanceId, instanceName, expectedCtx
+        )
       end
+    end
+    return nil, nil
+  end
+
+  local built
+  if journalLink or kind == "Dungeon" then
+    built = buildJournalLootPreviewLink(
+      journalLink,
+      itemID,
+      targetIlvl,
+      targetTrack,
+      kind,
+      instanceId,
+      instanceName,
+      apiLink
+    )
+  end
+
+  if built and (kind == "Dungeon" or kind == "Raid" or lootPreviewAcceptableForUse(built, itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)) then
+    local displayLink = pickLootDisplayPreviewLink(apiLink, built, itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)
+    return finalizeResolvedLootPreviewLink(
+      itemID, built, displayLink, targetIlvl, targetTrack, kind, instanceId, instanceName, expectedCtx
+    )
+  end
+
+  if apiLink and tonumber(apiLink:match("item:(%d+)")) == itemID and targetTrack then
+    local merged
+    if kind == "Dungeon" then
+      merged = applyDungeonPreviewEncoding(apiLink, expectedCtx, targetTrack)
+    else
+      merged = applyPresetUpgradeEncoding(apiLink, expectedCtx, targetTrack)
+    end
+    if merged and lootPreviewAcceptableForUse(merged, itemID, targetIlvl, targetTrack, kind, instanceId, instanceName) then
+      return finalizeResolvedLootPreviewLink(
+        itemID, merged, merged, targetIlvl, targetTrack, kind, instanceId, instanceName, expectedCtx
+      )
     end
   end
 
-  if not resolved then
-    resolved = findPreviewLinkForIlvl(itemID, targetIlvl, instanceKind, targetTrack, instanceId, instanceName)
-  end
+  return nil, nil
+end
 
-  if not resolved and journalLink then
-    resolved = synthesizePreviewLink(journalLink, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+local function resolveLootJournalBase(ref, itemID, journalLink)
+  if ref and ref.token_link and ref.item_id == itemID then
+    -- Tier: use the compact piece link grafted from the token (upgrade encoding already aligned).
+    if ref.link and tonumber(ref.link:match("item:(%d+)")) == itemID then
+      return ref.link
+    end
+    return ref.token_link
   end
+  if journalLink then
+    return journalLink
+  end
+  if not ref then
+    return nil
+  end
+  if ref.link then
+    local linkItemID = tonumber(ref.link:match("item:(%d+)"))
+    if linkItemID == itemID then
+      return ref.link
+    end
+  end
+  if ref.token_link and NS.resolveArmorTokenLootLink then
+    local tokenID = ref.token_item_id or tonumber(ref.token_link:match("item:(%d+)"))
+    if tokenID then
+      local _, classToken = UnitClass("player")
+      local pieceLink = NS.resolveArmorTokenLootLink(tokenID, ref.token_link, classToken)
+      if pieceLink then
+        return pieceLink
+      end
+    end
+  end
+  return ref.link
+end
 
-  previewLinkCache[resolveKey] = resolved or false
-  if resolved then
-    registerResolvedPreviewLink(itemID, resolved, instanceKind)
+local function applyLootPreviewToRef(ref, journalLink, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  local journalBase = resolveLootJournalBase(ref, itemID, journalLink)
+  local scoreLink, displayLink = resolveApiLootPreviewLink(
+    itemID,
+    targetIlvl,
+    targetTrack,
+    instanceKind,
+    instanceId,
+    instanceName,
+    journalBase or ref.link
+  )
+  if not scoreLink then
+    return nil, nil
   end
-  return resolved
+  ref.resolved_link = scoreLink
+  ref.preview_link = displayLink or scoreLink
+  return scoreLink, displayLink
+end
+
+local function findPreviewLinkForIlvlWithJournal(journalLink, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
+  local scoreLink = resolveApiLootPreviewLink(
+    itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName, journalLink
+  )
+  return scoreLink
+end
+
+local function syncLootPreviewMetadata(ref, previewPreset, scoreLink, displayLink)
+  if not ref or ref.source ~= "loot" or not previewPreset or previewPreset.key == "journal" then
+    return
+  end
+  local targetIlvl = getPreviewTargetIlvl(
+    previewPreset.ilvl,
+    ref.instance_id,
+    ref.instance_name,
+    ref.instance_kind
+  )
+  local targetTrack = getPreviewTargetTrack(
+    previewPreset,
+    ref.instance_id,
+    ref.instance_name,
+    ref.instance_kind
+  )
+  local itemID = ref.item_id or tonumber(ref.link and ref.link:match("item:(%d+)"))
+  if not scoreLink or not itemID then
+    return
+  end
+  ref.preview_ilvl = targetIlvl
+  ref.upgrade_track = targetTrack
+  ref.preview_link = pickLootDisplayPreviewLink(displayLink, scoreLink, itemID, targetIlvl, targetTrack, ref.instance_kind, ref.instance_id, ref.instance_name) or scoreLink
+end
+
+local function resolveLootPreviewForRef(ref, previewPreset, journalInstanceId, instanceNameOverride)
+  if not ref or not ref.link then
+    return nil, nil
+  end
+  if ref.source ~= "loot" or not previewPreset or previewPreset.key == "journal" or not previewPreset.ilvl or previewPreset.ilvl <= 0 then
+    return ref.link, ref.link
+  end
+  local itemID = ref.item_id or tonumber(ref.link:match("item:(%d+)"))
+  if not itemID then
+    return nil, nil
+  end
+  local instanceId = journalInstanceId or ref.instance_id
+  local instanceName = instanceNameOverride or ref.instance_name
+  local targetIlvl = getPreviewTargetIlvl(previewPreset.ilvl, instanceId, instanceName, ref.instance_kind)
+  local targetTrack = getPreviewTargetTrack(previewPreset, instanceId, instanceName, ref.instance_kind)
+  local scoreLink, displayLink = applyLootPreviewToRef(
+    ref, nil, itemID, targetIlvl, targetTrack, ref.instance_kind, instanceId, instanceName
+  )
+  syncLootPreviewMetadata(ref, previewPreset, scoreLink, displayLink)
+  return scoreLink, displayLink
 end
 
 local function warmPreviewTemplates(refs, previewPreset)
@@ -1973,46 +2408,25 @@ local function warmPreviewTemplates(refs, previewPreset)
     return
   end
 
-  local probed = {}
-  for _, ref in ipairs(refs or {}) do
-    if ref.source == "loot" and ref.link then
-      local itemID = ref.item_id or tonumber(ref.link:match("item:(%d+)"))
-      if itemID and not probed[itemID] then
-        probed[itemID] = true
-        probeItemPreviewContexts(itemID, ref.instance_kind)
-      end
-    end
-  end
-
   for _, ref in ipairs(refs or {}) do
     if ref.source == "loot" and ref.link then
       local itemID = ref.item_id or tonumber(ref.link:match("item:(%d+)"))
       if itemID then
-        findPreviewLinkForIlvl(
-          itemID,
-          getPreviewTargetIlvl(previewPreset.ilvl, ref.instance_id, ref.instance_name, ref.instance_kind),
-          ref.instance_kind,
-          previewPreset.track,
-          ref.instance_id,
-          ref.instance_name
-        )
-      end
-    end
-  end
-
-  for _, ref in ipairs(refs or {}) do
-    if ref.source == "loot" and ref.link then
-      local itemID = ref.item_id or tonumber(ref.link:match("item:(%d+)"))
-      if itemID then
-        findPreviewLinkForIlvlWithJournal(
-          ref.link,
-          itemID,
-          getPreviewTargetIlvl(previewPreset.ilvl, ref.instance_id, ref.instance_name, ref.instance_kind),
-          previewPreset.track,
-          ref.instance_kind,
-          ref.instance_id,
-          ref.instance_name
-        )
+        local targetIlvl = getPreviewTargetIlvl(previewPreset.ilvl, ref.instance_id, ref.instance_name, ref.instance_kind)
+        local targetTrack = getPreviewTargetTrack(previewPreset, ref.instance_id, ref.instance_name, ref.instance_kind)
+        local trusted = isTrustedPreviewLink(itemID, targetIlvl, targetTrack, ref.resolved_link)
+        if not trusted and not (ref.resolved_link and previewLinkUsableForScoring(
+            ref.resolved_link,
+            targetIlvl,
+            targetTrack,
+            itemID,
+            ref.instance_kind,
+            ref.instance_id,
+            ref.instance_name
+          )) then
+          clearPreviewCacheMiss(itemID, targetIlvl, targetTrack, ref.instance_kind, ref.instance_id, ref.instance_name)
+          resolveLootPreviewForRef(ref, previewPreset)
+        end
       end
     end
   end
@@ -2031,17 +2445,22 @@ local function getInstanceKind(journalInstanceId, fallbackKind)
   return "Dungeon"
 end
 
-resolvePreviewLootLink = function(journalInstanceId, itemID, previewPreset, instanceKind, journalLink, instanceName)
+resolvePreviewLootLink = function(journalInstanceId, itemID, previewPreset, instanceKind, journalLink, instanceName, ref)
   if not itemID or not previewPreset or previewPreset.key == "journal" or not previewPreset.key then
     return nil
   end
   if previewPreset.ilvl and previewPreset.ilvl > 0 then
+    if ref then
+      local scoreLink = resolveLootPreviewForRef(ref, previewPreset, journalInstanceId, instanceName)
+      return scoreLink
+    end
     local targetIlvl = getPreviewTargetIlvl(previewPreset.ilvl, journalInstanceId, instanceName, instanceKind)
+    local targetTrack = getPreviewTargetTrack(previewPreset, journalInstanceId, instanceName, instanceKind)
     return findPreviewLinkForIlvlWithJournal(
       journalLink,
       itemID,
       targetIlvl,
-      previewPreset.track,
+      targetTrack,
       instanceKind,
       journalInstanceId,
       instanceName
@@ -2057,9 +2476,8 @@ local function resolveLootRefLink(ref, previewPreset)
   if ref.source ~= "loot" or not previewPreset or previewPreset.key == "journal" then
     return ref.link
   end
-  local itemID = ref.item_id or tonumber(ref.link:match("item:(%d+)"))
-  local previewLink = resolvePreviewLootLink(ref.instance_id, itemID, previewPreset, ref.instance_kind, ref.link, ref.instance_name)
-  return previewLink or ref.link
+  local scoreLink = resolveLootPreviewForRef(ref, previewPreset)
+  return scoreLink
 end
 
 local function buildLootUpgradePresets()
@@ -2152,13 +2570,7 @@ NS.LOOT_UPGRADE_PRESETS = {}
 
 function NS.invalidateLootUpgradePresets()
   lootUpgradePresetsCache = nil
-  previewLinkCache = {}
-  itemIlvlPreviewCache = {}
-  trackIlvlTemplateCache = {}
-  slotTemplateCache = {}
-  ilvlTemplateList = {}
-  authoritativePreviewCache = {}
-  ILVL_BY_CONTEXT_ENUM = nil
+  clearPreviewCaches()
   invalidateEjDungeonLookup()
   NS.LOOT_UPGRADE_PRESETS = NS.getLootUpgradePresets()
 end
@@ -3009,9 +3421,6 @@ local function buildCrestPreviewLink(invSlot, link, itemID, targetIlvl, targetTr
   if not predLink and crestStep then
     predLink = buildCrestPreviewLinkFromBonusStep(link, crestStep)
   end
-  if not predLink then
-    predLink = synthesizePreviewLink(link, itemID, targetIlvl, targetTrack, "Dungeon", nil, nil)
-  end
   if not predLink or predLink == link then
     return nil
   end
@@ -3577,73 +3986,131 @@ function NS.collectCrestUpgradeOpportunities(specKey)
   return results, nil
 end
 
+local MAX_ITEM_STAT_READY_RETRIES = 20
+
 local function scoreOneGearRef(session, ref)
   local specKey = session.specKey
   local previewPreset = session.previewPreset
   local useTrackPreview = session.useTrackPreview
 
   if not ref.link then
-    return
+    return "skipped"
   end
   if isTrinketLink(ref.link) or (ref.preview_link and isTrinketLink(ref.preview_link)) then
-    return
+    return "skipped"
   end
   local usabilityLink = ref.resolved_link or ref.link
-  if specKey and not isLootLinkUsableForPlayer(usabilityLink, specKey) then
-    return
-  end
 
   local scoreLink = usabilityLink
   local targetTrack
+  local targetIlvl
+  local hasValidTrackPreview = not (ref.source == "loot" and useTrackPreview)
 
   if ref.source == "loot" and useTrackPreview then
-    targetTrack = previewPreset.track
+    targetTrack = getPreviewTargetTrack(previewPreset, ref.instance_id, ref.instance_name, ref.instance_kind)
     local itemID = ref.item_id or tonumber(ref.link:match("item:(%d+)"))
-    local targetIlvl = getPreviewTargetIlvl(previewPreset.ilvl, ref.instance_id, ref.instance_name, ref.instance_kind)
-    local previewLink = resolvePreviewLootLink(ref.instance_id, itemID, previewPreset, ref.instance_kind, ref.link, ref.instance_name)
-    if not previewLink or previewLink == ref.link
-      or not previewLinkUsableForScoring(
+    targetIlvl = getPreviewTargetIlvl(previewPreset.ilvl, ref.instance_id, ref.instance_name, ref.instance_kind)
+    local previewLink = ref.resolved_link
+    if previewLink and isTrustedPreviewLink(itemID, targetIlvl, targetTrack, previewLink)
+      and lootPreviewLinkMatchesTarget(
+        previewLink,
+        itemID,
+        targetIlvl,
+        targetTrack,
+        ref.instance_kind,
+        ref.instance_id,
+        ref.instance_name,
+        ref.link
+      ) then
+      scoreLink = previewLink
+      ref.resolved_link = previewLink
+      hasValidTrackPreview = true
+    elseif not previewLink or not previewLinkUsableForScoring(
         previewLink,
         targetIlvl,
-        previewPreset.track,
+        targetTrack,
         itemID,
-        ref.instance_kind
+        ref.instance_kind,
+        ref.instance_id,
+        ref.instance_name
       ) then
-      -- No preview link at selected track ilvl; score with journal link skipped below.
-    else
-      scoreLink = previewLink
+      clearPreviewCacheMiss(itemID, targetIlvl, targetTrack, ref.instance_kind, ref.instance_id, ref.instance_name)
+      previewLink = resolvePreviewLootLink(
+        ref.instance_id,
+        itemID,
+        previewPreset,
+        ref.instance_kind,
+        nil,
+        ref.instance_name,
+        ref
+      )
+    end
+    if not hasValidTrackPreview then
+      if not previewLink or not previewLinkUsableForScoring(
+          previewLink,
+          targetIlvl,
+          targetTrack,
+          itemID,
+          ref.instance_kind,
+          ref.instance_id,
+          ref.instance_name
+        ) then
+        -- The score session will yield and retry while preview data resolves.
+      else
+        scoreLink = previewLink
+        ref.resolved_link = previewLink
+        hasValidTrackPreview = true
+      end
     end
   elseif ref.source == "loot" and ref.resolved_link and ref.resolved_link ~= ref.link then
     scoreLink = ref.resolved_link
   end
 
-  if ref.source == "loot" and useTrackPreview and scoreLink == ref.link then
-    return
+  if not hasValidTrackPreview then
+    return "pending"
+  end
+  if NS.statsFromItemLink and not NS.statsFromItemLink(scoreLink) then
+    return "pending"
   end
   if specKey and scoreLink and not isLootLinkUsableForPlayer(scoreLink, specKey) then
-    return
+    return "skipped"
   end
 
-  local pred = NS.Predictor.PredictItemDelta({ link = scoreLink }, specKey)
+  local itemIlvl = getItemIlvl(scoreLink)
+  if not targetIlvl or targetIlvl <= 0 then
+    targetIlvl = getPreviewTargetIlvl(previewPreset.ilvl, ref.instance_id, ref.instance_name, ref.instance_kind)
+  end
+  local displayIlvl = (ref.source == "loot" and useTrackPreview and targetIlvl and targetIlvl > 0)
+    and targetIlvl
+    or (itemIlvl > 0 and itemIlvl or targetIlvl or itemIlvl)
+  if not displayIlvl or displayIlvl <= 0 then
+    displayIlvl = targetIlvl or itemIlvl
+  end
+  ref.resolved_link = scoreLink
+  syncLootPreviewMetadata(ref, previewPreset, scoreLink, ref.preview_link)
+  local displayLink = ref.preview_link or scoreLink
+  ref.preview_link = displayLink
+
+  local pred, predErr = NS.Predictor.PredictItemDelta({ link = scoreLink }, specKey, session.predictionContext)
   if pred then
     local best = pickBestPrediction(pred)
     if best then
-      local itemIlvl = getItemIlvl(scoreLink)
-      local targetIlvl = getPreviewTargetIlvl(previewPreset.ilvl, ref.instance_id, ref.instance_name, ref.instance_kind)
-      local displayIlvl = useTrackPreview and targetIlvl or itemIlvl
-      if not displayIlvl or displayIlvl <= 0 then
-        displayIlvl = itemIlvl
-      end
       local equippedRef = best.slot_id and NS.getSlotItemRef(best.slot_id) or nil
       local equippedName = equippedRef and select(1, GetItemInfo(NS.itemRefToLink(equippedRef))) or nil
+      local displayIlvl = targetIlvl or ref.preview_ilvl
+      local displayTrack = targetTrack
+        or ref.upgrade_track
+        or getUpgradeTrackFromLink(scoreLink)
+        or (previewPreset and previewPreset.track)
       table.insert(session.rows, {
         link = scoreLink,
+        preview_display_link = displayLink,
         journal_link = ref.link,
-        name = ref.name or select(1, GetItemInfo(scoreLink)) or scoreLink,
-        quality = ref.quality or select(3, GetItemInfo(scoreLink)) or -1,
+        name = ref.name or select(1, GetItemInfo(displayLink)) or select(1, GetItemInfo(scoreLink)) or scoreLink,
+        quality = ref.quality or select(3, GetItemInfo(displayLink)) or select(3, GetItemInfo(scoreLink)) or -1,
         ilvl = displayIlvl,
         preview_ilvl = displayIlvl,
-        upgrade_track = targetTrack or getUpgradeTrackFromLink(scoreLink),
+        upgrade_track = displayTrack,
         source = ref.source,
         source_label = ref.source_label,
         claimable = ref.claimable,
@@ -3659,9 +4126,15 @@ local function scoreOneGearRef(session, ref)
         equipped_name = equippedName,
         is_upgrade = (best.dps_delta or 0) > 0.5,
       })
+      return "scored"
     end
+    return "skipped"
   else
+    if type(predErr) == "string" and predErr:find("data not ready", 1, true) then
+      return "pending"
+    end
     session.errors = session.errors + 1
+    return "error"
   end
 end
 
@@ -3670,6 +4143,43 @@ local function finalizeGearRefScoreSession(session)
     return (a.dps_delta or 0) > (b.dps_delta or 0)
   end)
 
+  if session.profileStart and not session.profileReported and debugprofilestop then
+    session.profileReported = true
+    local cacheEnd = NS.getPredictionCacheSnapshot and NS.getPredictionCacheSnapshot() or {}
+    local cacheStart = session.cacheStatsStart or {}
+    local statEnd = NS.statDeltaStats or {}
+    local statStart = session.statStatsStart or {}
+    local function delta(after, before, key)
+      local value = (after[key] or 0) - (before[key] or 0)
+      if value < 0 then
+        return after[key] or 0
+      end
+      return value
+    end
+    NS.lastGearScoreStats = {
+      items = session.index - 1,
+      elapsed_ms = debugprofilestop() - session.profileStart,
+      cache_hits = delta(cacheEnd, cacheStart, "hits"),
+      cache_misses = delta(cacheEnd, cacheStart, "misses"),
+      forward_calls = delta(cacheEnd, cacheStart, "forward_count"),
+      forward_ms = delta(cacheEnd, cacheStart, "forward_ms"),
+      cache_lookup_ms = delta(cacheEnd, cacheStart, "lookup_ms"),
+      stat_delta_ms = delta(statEnd, statStart, "totalMs"),
+      stat_delta_cache_hits = delta(statEnd, statStart, "cache_hits"),
+      stat_delta_cache_misses = delta(statEnd, statStart, "cache_misses"),
+    }
+    NS.debugPrint(string.format(
+      "gear scoring: %d items in %.1fms, forward %.1fms/%d, cache %d/%d, stat delta %.1fms",
+      NS.lastGearScoreStats.items,
+      NS.lastGearScoreStats.elapsed_ms,
+      NS.lastGearScoreStats.forward_ms,
+      NS.lastGearScoreStats.forward_calls,
+      NS.lastGearScoreStats.cache_hits,
+      NS.lastGearScoreStats.cache_hits + NS.lastGearScoreStats.cache_misses,
+      NS.lastGearScoreStats.stat_delta_ms
+    ))
+  end
+
   return session.rows, session.errors
 end
 
@@ -3677,11 +4187,20 @@ function NS.createGearRefScoreSession(refs, specKey, opts)
   opts = opts or {}
   local previewPreset = NS.resolveLootPreviewPreset(opts)
   local useTrackPreview = previewPreset and previewPreset.key ~= "journal"
-  if useTrackPreview then
-    previewLinkCache = {}
-    authoritativePreviewCache = {}
+  local profileStart
+  local cacheStatsStart
+  local statStatsStart
+  if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug and debugprofilestop then
+    profileStart = debugprofilestop()
+    cacheStatsStart = NS.getPredictionCacheSnapshot and NS.getPredictionCacheSnapshot() or {}
+    local statStats = NS.statDeltaStats or {}
+    statStatsStart = {
+      totalMs = statStats.totalMs or 0,
+      cache_hits = statStats.cache_hits or 0,
+      cache_misses = statStats.cache_misses or 0,
+    }
   end
-  return {
+  local session = {
     refs = refs or {},
     specKey = specKey,
     opts = opts,
@@ -3690,7 +4209,14 @@ function NS.createGearRefScoreSession(refs, specKey, opts)
     errors = 0,
     previewPreset = previewPreset,
     useTrackPreview = useTrackPreview,
+    pendingAttempts = {},
+    previewWarmedRefs = {},
+    predictionContext = NS.createPredictionContext and NS.createPredictionContext() or nil,
+    profileStart = profileStart,
+    cacheStatsStart = cacheStatsStart,
+    statStatsStart = statStatsStart,
   }
+  return session
 end
 
 function NS.scoreGearRefSessionStep(session, batchSize)
@@ -3704,6 +4230,9 @@ function NS.scoreGearRefSessionStep(session, batchSize)
 
   local startIdx = session.index
   local endIdx = math.min(startIdx + batchSize - 1, #session.refs)
+  if session.pendingAttempts[session.refs[startIdx]] then
+    endIdx = startIdx
+  end
   if endIdx < startIdx then
     return 0, true
   end
@@ -3711,16 +4240,34 @@ function NS.scoreGearRefSessionStep(session, batchSize)
   if session.useTrackPreview then
     local batchRefs = {}
     for i = startIdx, endIdx do
-      batchRefs[#batchRefs + 1] = session.refs[i]
+      local ref = session.refs[i]
+      if not session.previewWarmedRefs[ref] then
+        session.previewWarmedRefs[ref] = true
+        batchRefs[#batchRefs + 1] = ref
+      end
     end
-    warmPreviewTemplates(batchRefs, session.previewPreset)
+    if #batchRefs > 0 then
+      warmPreviewTemplates(batchRefs, session.previewPreset)
+    end
   end
 
   for i = startIdx, endIdx do
-    scoreOneGearRef(session, session.refs[i])
+    local ref = session.refs[i]
+    local status = scoreOneGearRef(session, ref)
+    if status == "pending" then
+      local attempts = (session.pendingAttempts[ref] or 0) + 1
+      session.pendingAttempts[ref] = attempts
+      if attempts < MAX_ITEM_STAT_READY_RETRIES then
+        session.index = i
+        return i - startIdx, false, true
+      end
+      session.errors = session.errors + 1
+    else
+      session.pendingAttempts[ref] = nil
+    end
   end
   session.index = endIdx + 1
-  return endIdx - startIdx + 1, session.index > #session.refs
+  return endIdx - startIdx + 1, session.index > #session.refs, false
 end
 
 function NS.finalizeGearRefScoreSession(session)
@@ -3844,6 +4391,7 @@ function NS.collectGearCandidates(specKey, opts)
   end
 
   if sources.loot then
+    clearPreviewCaches()
     local instanceId = opts.instance_id or MR_MYTHICAL_DPS_CONFIG.gear_advisor_instance_id or NS.LOOT_ALL_INSTANCES
     local scanOpts = {
       upgrades_only = opts.upgrades_only,
@@ -3863,7 +4411,7 @@ function NS.collectGearCandidates(specKey, opts)
       table.insert(notes, lootNote)
     end
     for _, ref in ipairs(lootRefs) do
-      ref.resolved_link = resolveLootRefLink(ref, previewPreset)
+      resolveLootPreviewForRef(ref, previewPreset)
       table.insert(flatRefs, ref)
     end
     if NS.purgeStaleLootSelections then

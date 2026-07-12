@@ -18,9 +18,11 @@ local function getSlotItemRef(slotId)
   if not link then
     return nil
   end
-  local guid = NS.getGuidFromEquipmentSlot(slotId)
-  local comparisonItem = NS.getNativeComparisonItemForInventorySlot(slotId)
-  return { link = link, guid = guid, slotId = slotId, comparisonItem = comparisonItem }
+  local guid
+  if slotId == 16 or slotId == 17 then
+    guid = NS.getGuidFromEquipmentSlot(slotId)
+  end
+  return { link = link, guid = guid, slotId = slotId }
 end
 
 local function is2HWeapon(itemLink)
@@ -291,6 +293,79 @@ local function isArmorCandidateAllowedForClass(classToken, itemClassID, itemSubC
   return (not primaryArmor) or itemSubClassID == primaryArmor
 end
 
+local function makeStatsBuffer()
+  return {
+    primary_stat = 0,
+    crit = 0,
+    haste = 0,
+    mastery = 0,
+    versatility = 0,
+  }
+end
+
+local function refreshPredictionContext(context)
+  context.generation = NS.predictionContextGeneration or 0
+  context.baseStats = NS.getPlayerStatVector()
+  context.basePredBySpec = {}
+  context.equippedRefs = {}
+  context.ownedWeaponCandidates = nil
+  context.predictionStats = context.predictionStats or makeStatsBuffer()
+  context.weaponDeltaStats = context.weaponDeltaStats or makeStatsBuffer()
+  return context
+end
+
+local function createPredictionContext()
+  return refreshPredictionContext({})
+end
+
+local function ensurePredictionContext(context)
+  if context and (
+    context.generation ~= (NS.predictionContextGeneration or 0)
+      or not context.baseStats
+      or not context.basePredBySpec
+      or not context.equippedRefs
+      or not context.predictionStats
+      or not context.weaponDeltaStats
+  ) then
+    refreshPredictionContext(context)
+  end
+  return context
+end
+
+local function getContextSlotItemRef(context, slotId)
+  if not context then
+    return getSlotItemRef(slotId)
+  end
+  ensurePredictionContext(context)
+  local cached = context.equippedRefs[slotId]
+  if cached == nil then
+    cached = getSlotItemRef(slotId) or false
+    context.equippedRefs[slotId] = cached
+  end
+  return cached or nil
+end
+
+local function getContextBase(context, specKey)
+  if not context then
+    local baseStats = NS.getPlayerStatVector()
+    return baseStats, NS.getCachedBaseDps(baseStats, specKey)
+  end
+  ensurePredictionContext(context)
+  local basePred = context.basePredBySpec[specKey]
+  if basePred == nil then
+    basePred = NS.getCachedBaseDps(context.baseStats, specKey)
+    context.basePredBySpec[specKey] = basePred
+  end
+  return context.baseStats, basePred
+end
+
+local function statsWithDelta(base, delta, context)
+  if context and NS.addStatsInto then
+    return NS.addStatsInto(context.predictionStats, base, delta, 1)
+  end
+  return NS.addStats(base, delta, 1)
+end
+
 local function isSameItemRef(a, b)
   if not a or not b then
     return false
@@ -303,15 +378,30 @@ local function isSameItemRef(a, b)
   return NS.itemRefToLink(a) == NS.itemRefToLink(b)
 end
 
-local function collectOwnedWeaponCandidates()
+local function isWeaponLikeEquipLoc(equipLoc)
+  return equipLoc == "INVTYPE_WEAPON" or equipLoc == "INVTYPE_2HWEAPON"
+    or equipLoc == "INVTYPE_WEAPONMAINHAND" or equipLoc == "INVTYPE_WEAPONOFFHAND"
+    or equipLoc == "INVTYPE_HOLDABLE" or equipLoc == "INVTYPE_SHIELD"
+end
+
+local function collectOwnedWeaponCandidates(context)
+  if context then
+    ensurePredictionContext(context)
+    if context.ownedWeaponCandidates then
+      return context.ownedWeaponCandidates
+    end
+  end
+
   local out = {}
 
-  local mh = getSlotItemRef(16)
+  local mh = getContextSlotItemRef(context, 16)
   if mh and mh.link then
+    mh.itemClassID, mh.itemSubClassID, mh.equipLoc = getItemTypeInfo(mh.link)
     table.insert(out, mh)
   end
-  local oh = getSlotItemRef(17)
+  local oh = getContextSlotItemRef(context, 17)
   if oh and oh.link then
+    oh.itemClassID, oh.itemSubClassID, oh.equipLoc = getItemTypeInfo(oh.link)
     table.insert(out, oh)
   end
 
@@ -320,21 +410,50 @@ local function collectOwnedWeaponCandidates()
       for slot = 1, C_Container.GetContainerNumSlots(bag) do
         local info = C_Container.GetContainerItemInfo(bag, slot)
         if info and info.hyperlink then
-          table.insert(out, {
-            link = info.hyperlink,
-            guid = info["itemGUID"] or info["guid"] or NS.getGuidFromBagSlot(bag, slot),
-            bag = bag,
-            slot = slot,
-          })
+          local itemClassID, itemSubClassID, equipLoc = getItemTypeInfo(info.hyperlink)
+          if isWeaponLikeEquipLoc(equipLoc) then
+            table.insert(out, {
+              link = info.hyperlink,
+              guid = info["itemGUID"] or info["guid"] or NS.getGuidFromBagSlot(bag, slot),
+              bag = bag,
+              slot = slot,
+              itemClassID = itemClassID,
+              itemSubClassID = itemSubClassID,
+              equipLoc = equipLoc,
+            })
+          end
         end
       end
     end
   end
 
+  if context then
+    context.ownedWeaponCandidates = out
+  end
   return out
 end
 
 local ZERO_STATS = NS.ZERO_STATS
+
+local function clearStatsBuffer(stats)
+  stats.primary_stat = 0
+  stats.crit = 0
+  stats.haste = 0
+  stats.mastery = 0
+  stats.versatility = 0
+  return stats
+end
+
+local function returnWeaponDelta(delta, out)
+  if not out then
+    return delta or ZERO_STATS
+  end
+  clearStatsBuffer(out)
+  if delta and NS.addStatsInto then
+    NS.addStatsInto(out, out, delta, 1)
+  end
+  return out
+end
 
 local function isEmptyWeaponCandidate(cand)
   if not cand or not cand.key then
@@ -349,7 +468,7 @@ local function predictDelta(base, stats, specKey, basePred)
 end
 
 -- Combined MH+OH stat delta for loadout search (matches tooltip weapon math).
-function NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey)
+function NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey, out)
   mhCand = mhCand or eqMh
   ohCand = ohCand or eqOh
   local mhRef = NS.candidateRefFromCand(mhCand, 16)
@@ -366,13 +485,13 @@ function NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey)
   local ohEmpty = isEmptyWeaponCandidate(ohCand)
 
   if mhEmpty and ohEmpty then
-    return ZERO_STATS
+    return returnWeaponDelta(nil, out)
   end
 
   local mhSame = eqMh and mhCand and eqMh.key and mhCand.key and eqMh.key == mhCand.key
   local ohSame = eqOh and ohCand and eqOh.key and ohCand.key and eqOh.key == ohCand.key
   if mhSame and ohSame then
-    return ZERO_STATS
+    return returnWeaponDelta(nil, out)
   end
 
   local newIs2H = mhLink and NS.is2HWeapon(mhLink)
@@ -382,36 +501,34 @@ function NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey)
     if eqMhRef and eqMhLink then
       if eqOhRef and eqOhLink and not eqIs2H then
         local delta = NS.computeStatDelta(mhRef, eqMhRef, { pairedRef = eqOhRef, addPaired = false })
-        return delta or ZERO_STATS
+        return returnWeaponDelta(delta, out)
       end
       local delta = NS.computeStatDelta(mhRef, eqMhRef)
-      return delta or ZERO_STATS
+      return returnWeaponDelta(delta, out)
     end
-    return ZERO_STATS
+    return returnWeaponDelta(nil, out)
   end
 
   if eqIs2H and eqMhRef then
     if ohEmpty or not ohRef then
-      return ZERO_STATS
+      return returnWeaponDelta(nil, out)
     end
     local delta = NS.computeStatDelta(mhRef, eqMhRef, { pairedRef = ohRef, addPaired = true })
-    return delta or ZERO_STATS
+    return returnWeaponDelta(delta, out)
   end
 
-  local total = {
-    primary_stat = 0, crit = 0, haste = 0, mastery = 0, versatility = 0,
-  }
+  local total = clearStatsBuffer(out or makeStatsBuffer())
   if not mhEmpty and mhRef and eqMhRef and not mhSame then
     local delta = NS.computeStatDelta(mhRef, eqMhRef)
     if delta then
-      total = NS.addStats(total, delta, 1)
+      NS.addStatsInto(total, total, delta, 1)
     end
   end
   if not ohEmpty and ohRef then
     if eqOhRef and not ohSame then
       local delta = NS.computeStatDelta(ohRef, eqOhRef)
       if delta then
-        total = NS.addStats(total, delta, 1)
+        NS.addStatsInto(total, total, delta, 1)
       end
     elseif not eqOhRef then
       local ohStats = ohCand and ohCand.stats
@@ -419,33 +536,47 @@ function NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey)
         ohStats = NS.statsFromItemLink(ohLink)
       end
       if ohStats then
-        total = NS.addStats(total, ohStats, 1)
+        NS.addStatsInto(total, total, ohStats, 1)
       end
     end
   end
   return total
 end
 
-function NS.computeWeaponPairDpsDelta(mhCand, ohCand, eqMh, eqOh, specKey)
+function NS.computeWeaponPairDpsDelta(mhCand, ohCand, eqMh, eqOh, specKey, context)
   if not specKey or not NS.computeWeaponLoadoutDelta then
     return nil
   end
-  local baseStats = NS.getPlayerStatVector()
-  local basePred = NS.getCachedBaseDps(baseStats, specKey)
-  local wdelta = NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey)
-  local stats = NS.addStats(baseStats, wdelta, 1)
+  local baseStats, basePred = getContextBase(context, specKey)
+  local out = context and context.weaponDeltaStats or nil
+  local wdelta = NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey, out)
+  local stats = statsWithDelta(baseStats, wdelta, context)
   return NS.getCachedPrediction(stats, specKey) - basePred
 end
 
-local function findBestPairScenario(candidateRef, mainHandRef, specKey, classToken, candidateIsOffHandOnly, base, basePred)
+local function findBestPairScenario(
+  candidateRef,
+  mainHandRef,
+  specKey,
+  classToken,
+  candidateIsOffHandOnly,
+  base,
+  basePred,
+  context
+)
   local best = nil
   local lastErr = nil
 
-  for _, pairRef in ipairs(collectOwnedWeaponCandidates()) do
+  for _, pairRef in ipairs(collectOwnedWeaponCandidates(context)) do
     if not isSameItemRef(pairRef, candidateRef) then
       local pairLink = NS.itemRefToLink(pairRef)
       if pairLink then
-        local pairClassID, pairSubClassID, pairEquipLoc = getItemTypeInfo(pairLink)
+        local pairClassID = pairRef.itemClassID
+        local pairSubClassID = pairRef.itemSubClassID
+        local pairEquipLoc = pairRef.equipLoc
+        if not pairEquipLoc then
+          pairClassID, pairSubClassID, pairEquipLoc = getItemTypeInfo(pairLink)
+        end
         local validPair = false
 
         if candidateIsOffHandOnly then
@@ -466,7 +597,7 @@ local function findBestPairScenario(candidateRef, mainHandRef, specKey, classTok
           end
 
           if stats then
-            local newStats = NS.addStats(base, stats, 1)
+            local newStats = statsWithDelta(base, stats, context)
             local pred, delta = predictDelta(base, newStats, specKey, basePred)
             if not best or delta > best.dps_delta then
               best = {
@@ -553,12 +684,12 @@ local function isWeaponEquipLoc(equipLoc)
     or equipLoc == "INVTYPE_HOLDABLE" or equipLoc == "INVTYPE_SHIELD"
 end
 
-local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, candidateEquipLoc)
+local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, candidateEquipLoc, context)
     local lastErr = nil
     local _, classToken = UnitClass("player")
     local itemClassID, itemSubClassID = getItemTypeInfo(itemLink)
-    local mainHandRef = getSlotItemRef(16)
-    local offHandRef = getSlotItemRef(17)
+    local mainHandRef = getContextSlotItemRef(context, 16)
+    local offHandRef = getContextSlotItemRef(context, 17)
     local currentIs2H = is2HWeapon(mainHandRef and mainHandRef.link)
     local candidateIs2H = is2HWeapon(itemLink)
     local candidateIsOffHandOnly = (candidateEquipLoc == "INVTYPE_WEAPONOFFHAND" or candidateEquipLoc == "INVTYPE_HOLDABLE" or candidateEquipLoc == "INVTYPE_SHIELD")
@@ -590,7 +721,7 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
         end
 
         if stats then
-          local withNew = NS.addStats(base, stats, 1)
+          local withNew = statsWithDelta(base, stats, context)
           local pred, delta = predictDelta(base, withNew, specKey, basePred)
           table.insert(results, { dps_base = basePred, dps_new = pred, dps_delta = delta, slot_id = 16, mode = "2h_replacement" })
         else
@@ -611,7 +742,9 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
       end
       if currentIs2H then
         if mainHandRef then
-          local pairResult, pairErr = findBestPairScenario(itemRef, mainHandRef, specKey, classToken, true, base, basePred)
+          local pairResult, pairErr = findBestPairScenario(
+            itemRef, mainHandRef, specKey, classToken, true, base, basePred, context
+          )
           if pairResult then
             table.insert(results, pairResult)
             return results
@@ -623,7 +756,7 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
         if offHandRef then
         local ohStats, err = NS.computeStatDelta(itemRef, offHandRef)
         if ohStats then
-          local withNew = NS.addStats(base, ohStats, 1)
+          local withNew = statsWithDelta(base, ohStats, context)
           local pred, delta = predictDelta(base, withNew, specKey, basePred)
           table.insert(results, { dps_base = basePred, dps_new = pred, dps_delta = delta, slot_id = 17, mode = "oh_replacement" })
         else
@@ -637,7 +770,7 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
             mastery = 0,
             versatility = 0,
           }
-          local withNew = NS.addStats(base, ohStats, 1)
+          local withNew = statsWithDelta(base, ohStats, context)
           local pred, delta = predictDelta(base, withNew, specKey, basePred)
           table.insert(results, { dps_base = basePred, dps_new = pred, dps_delta = delta, slot_id = 17, mode = "oh_replacement" })
       end
@@ -654,7 +787,7 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
       if mainHandRef and not currentIs2H then
         local mhStats, err = NS.computeStatDelta(itemRef, mainHandRef)
         if mhStats then
-          local newStats = NS.addStats(base, mhStats, 1)
+          local newStats = statsWithDelta(base, mhStats, context)
           local pred1, delta1 = predictDelta(base, newStats, specKey, basePred)
           table.insert(results, { dps_base = basePred, dps_new = pred1, dps_delta = delta1, slot_id = 16, mode = "mh_replacement" })
         else
@@ -663,7 +796,9 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
 
         -- If the offhand slot is empty, also evaluate the best paired offhand.
         if not offHandRef then
-          local pairResult, pairErr = findBestPairScenario(itemRef, mainHandRef, specKey, classToken, false, base, basePred)
+          local pairResult, pairErr = findBestPairScenario(
+            itemRef, mainHandRef, specKey, classToken, false, base, basePred, context
+          )
           if pairResult then
             table.insert(results, pairResult)
           else
@@ -674,7 +809,9 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
 
       -- Scenario 1b: if currently using a 2H, also evaluate best dual-wield pair.
       if currentIs2H and mainHandRef then
-        local pairResult, pairErr = findBestPairScenario(itemRef, mainHandRef, specKey, classToken, false, base, basePred)
+        local pairResult, pairErr = findBestPairScenario(
+          itemRef, mainHandRef, specKey, classToken, false, base, basePred, context
+        )
         if pairResult then
           table.insert(results, pairResult)
         else
@@ -686,7 +823,7 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
       if offHandRef and not currentIs2H and isItemAllowedForOffHand(classToken, specKey, itemClassID, itemSubClassID, candidateEquipLoc) then
         local ohStats, err = NS.computeStatDelta(itemRef, offHandRef)
         if ohStats then
-          local newStats = NS.addStats(base, ohStats, 1)
+          local newStats = statsWithDelta(base, ohStats, context)
           local pred2, delta2 = predictDelta(base, newStats, specKey, basePred)
           table.insert(results, { dps_base = basePred, dps_new = pred2, dps_delta = delta2, slot_id = 17, mode = "oh_replacement" })
         else
@@ -699,7 +836,7 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
       if mainHandRef then
         local mhStats, err = NS.computeStatDelta(itemRef, mainHandRef)
         if mhStats then
-          local newStats = NS.addStats(base, mhStats, 1)
+          local newStats = statsWithDelta(base, mhStats, context)
           local pred1, delta1 = predictDelta(base, newStats, specKey, basePred)
           table.insert(results, { dps_base = basePred, dps_new = pred1, dps_delta = delta1, slot_id = 16, mode = "mh_replacement" })
         else
@@ -716,16 +853,16 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
     return nil, (lastErr or "native comparison unavailable for weapon")
 end
 
-local function evaluateRingItem(itemRef, specKey, base, basePred)
-  local ring1Ref = getSlotItemRef(11)
-  local ring2Ref = getSlotItemRef(12)
+local function evaluateRingItem(itemRef, specKey, base, basePred, context)
+  local ring1Ref = getContextSlotItemRef(context, 11)
+  local ring2Ref = getContextSlotItemRef(context, 12)
   local results = {}
   local lastErr = nil
 
   if ring1Ref then
       local ring1Stats, err = NS.computeStatDelta(itemRef, ring1Ref)
       if ring1Stats then
-        local newStats = NS.addStats(base, ring1Stats, 1)
+        local newStats = statsWithDelta(base, ring1Stats, context)
         local pred1, delta1 = predictDelta(base, newStats, specKey, basePred)
         table.insert(results, { dps_base = basePred, dps_new = pred1, dps_delta = delta1, slot_id = 11, mode = "ring1" })
       else
@@ -737,7 +874,7 @@ local function evaluateRingItem(itemRef, specKey, base, basePred)
     if ring2Ref then
       local ring2Stats, err = NS.computeStatDelta(itemRef, ring2Ref)
       if ring2Stats then
-        local newStats = NS.addStats(base, ring2Stats, 1)
+        local newStats = statsWithDelta(base, ring2Stats, context)
         local pred2, delta2 = predictDelta(base, newStats, specKey, basePred)
         table.insert(results, { dps_base = basePred, dps_new = pred2, dps_delta = delta2, slot_id = 12, mode = "ring2" })
       else
@@ -751,15 +888,15 @@ local function evaluateRingItem(itemRef, specKey, base, basePred)
     return nil, (lastErr or "native comparison unavailable for rings")
 end
 
-local function evaluateArmorItem(itemRef, specKey, base, basePred, slots)
+local function evaluateArmorItem(itemRef, specKey, base, basePred, slots, context)
   local best = nil
   local lastErr = nil
   for _, slotId in ipairs(slots) do
-    local eqRef = getSlotItemRef(slotId)
+    local eqRef = getContextSlotItemRef(context, slotId)
     if eqRef then
       local itemStats, err = NS.computeStatDelta(itemRef, eqRef)
       if itemStats then
-        local newStats = NS.addStats(base, itemStats, 1)
+        local newStats = statsWithDelta(base, itemStats, context)
         local newPred, delta = predictDelta(base, newStats, specKey, basePred)
 
         if not best or delta > best.dps_delta then
@@ -783,11 +920,9 @@ local function evaluateArmorItem(itemRef, specKey, base, basePred, slots)
   return nil, (lastErr or "native comparison unavailable")
 end
 
-local function evaluateItem(itemRef, specKey)
-  itemRef = NS.resolveOwnedItemRef(itemRef)
+local function evaluateItem(itemRef, specKey, context)
+  ensurePredictionContext(context)
   local itemLink = NS.itemRefToLink(itemRef)
-  local base = NS.getPlayerStatVector()
-  local basePred = NS.getCachedBaseDps(base, specKey)
   local slots = getEquipSlotCandidates(itemRef)
   local _, _, candidateEquipLoc = getItemTypeInfo(itemLink)
 
@@ -795,16 +930,21 @@ local function evaluateItem(itemRef, specKey)
     return nil, "unknown equip slot"
   end
 
+  local base, basePred = getContextBase(context, specKey)
   if isWeaponEquipLoc(candidateEquipLoc) then
-    return evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, candidateEquipLoc)
+    local candidateGuid = type(itemRef) == "table" and (itemRef.guid or itemRef.itemGUID) or nil
+    if not candidateGuid and NS.resolveOwnedItemRef then
+      itemRef = NS.resolveOwnedItemRef(itemRef) or itemRef
+    end
+    return evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, candidateEquipLoc, context)
   end
   if slots[1] == 11 and slots[2] == 12 then
-    return evaluateRingItem(itemRef, specKey, base, basePred)
+    return evaluateRingItem(itemRef, specKey, base, basePred, context)
   end
-  return evaluateArmorItem(itemRef, specKey, base, basePred, slots)
+  return evaluateArmorItem(itemRef, specKey, base, basePred, slots, context)
 end
 
-function NS.Predictor.PredictItemDelta(itemRef, specKey)
+function NS.Predictor.PredictItemDelta(itemRef, specKey, context)
   -- Resolve: explicit arg > active profile from dashboard.
   specKey = specKey or NS.getActiveProfileKey()
   local itemLink = NS.itemRefToLink(itemRef)
@@ -815,15 +955,15 @@ function NS.Predictor.PredictItemDelta(itemRef, specKey)
     return nil, NS.MSG_NO_PROFILE_ACTION
   end
 
-  local pred, err = evaluateItem(itemRef, specKey)
+  local pred, err = evaluateItem(itemRef, specKey, context)
   if not pred then
     return nil, err or "prediction failed"
   end
   return pred
 end
 
-local function equippedCandidateForSlot(slotId)
-  local ref = getSlotItemRef(slotId)
+local function equippedCandidateForSlot(slotId, context)
+  local ref = getContextSlotItemRef(context, slotId)
   if not ref or not ref.link then
     return { key = "empty:" .. tostring(slotId), link = nil, stats = ZERO_STATS }
   end
@@ -842,21 +982,24 @@ local function equippedCandidateForSlot(slotId)
   return { key = "empty:" .. tostring(slotId), link = nil, stats = ZERO_STATS }
 end
 
-local function weaponLoadoutDpsDelta(mhPick, ohPick, eqMh, eqOh, specKey, baseStats, basePred)
-  local wdelta = NS.computeWeaponLoadoutDelta(mhPick, ohPick, eqMh, eqOh, specKey)
-  local stats = NS.addStats(baseStats, wdelta, 1)
+local function weaponLoadoutDpsDelta(mhPick, ohPick, eqMh, eqOh, specKey, baseStats, basePred, context)
+  local out = context and context.weaponDeltaStats or nil
+  local wdelta = NS.computeWeaponLoadoutDelta(mhPick, ohPick, eqMh, eqOh, specKey, out)
+  local stats = statsWithDelta(baseStats, wdelta, context)
   local pred = NS.getCachedPrediction(stats, specKey)
   return pred - basePred
 end
 
-local function bestMainHandPairDelta(mhCand, ohOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred)
+local function bestMainHandPairDelta(
+  mhCand, ohOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
+)
   if not NS.isValidWeaponCombo then
     return nil
   end
   local bestDelta = nil
   for _, ohPick in ipairs(ohOptions) do
     if NS.isValidWeaponCombo(mhCand, ohPick, classToken, specKey, loadout, false) then
-      local delta = weaponLoadoutDpsDelta(mhCand, ohPick, eqMh, eqOh, specKey, baseStats, basePred)
+      local delta = weaponLoadoutDpsDelta(mhCand, ohPick, eqMh, eqOh, specKey, baseStats, basePred, context)
       if bestDelta == nil or delta > bestDelta then
         bestDelta = delta
       end
@@ -865,14 +1008,16 @@ local function bestMainHandPairDelta(mhCand, ohOptions, eqMh, eqOh, classToken, 
   return bestDelta
 end
 
-local function bestOffHandPairDelta(ohCand, mhOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred)
+local function bestOffHandPairDelta(
+  ohCand, mhOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
+)
   if not NS.isValidWeaponCombo then
     return nil
   end
   local bestDelta = nil
   for _, mhPick in ipairs(mhOptions) do
     if NS.isValidWeaponCombo(mhPick, ohCand, classToken, specKey, loadout, false) then
-      local delta = weaponLoadoutDpsDelta(mhPick, ohCand, eqMh, eqOh, specKey, baseStats, basePred)
+      local delta = weaponLoadoutDpsDelta(mhPick, ohCand, eqMh, eqOh, specKey, baseStats, basePred, context)
       if bestDelta == nil or delta > bestDelta then
         bestDelta = delta
       end
@@ -882,7 +1027,7 @@ local function bestOffHandPairDelta(ohCand, mhOptions, eqMh, eqOh, classToken, s
 end
 
 -- Re-score weapon candidates using the best valid opposite-hand pairing (gear advisor list/filtering).
-function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey)
+function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey, context)
   if not candidatesBySlot or not specKey then
     return
   end
@@ -891,11 +1036,11 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey)
     return
   end
 
+  context = ensurePredictionContext(context or createPredictionContext())
   local _, classToken = UnitClass("player")
-  local baseStats = NS.getPlayerStatVector()
-  local basePred = NS.getCachedBaseDps(baseStats, specKey)
-  local eqMh = equippedCandidateForSlot(16)
-  local eqOh = equippedCandidateForSlot(17)
+  local baseStats, basePred = getContextBase(context, specKey)
+  local eqMh = equippedCandidateForSlot(16, context)
+  local eqOh = equippedCandidateForSlot(17, context)
 
   local ohOptions = {}
   local mhOptions = {}
@@ -943,20 +1088,20 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey)
       if not loadout.two_handed then
         return
       end
-      bestDelta = weaponLoadoutDpsDelta(cand, nil, eqMh, eqOh, specKey, baseStats, basePred)
+      bestDelta = weaponLoadoutDpsDelta(cand, nil, eqMh, eqOh, specKey, baseStats, basePred, context)
     elseif slotId == 16 then
       if not loadout.dual_wield then
         return
       end
       bestDelta = bestMainHandPairDelta(
-        cand, ohOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred
+        cand, ohOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
       )
     elseif slotId == 17 then
       if not loadout.dual_wield then
         return
       end
       bestDelta = bestOffHandPairDelta(
-        cand, mhOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred
+        cand, mhOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
       )
     end
 
@@ -985,4 +1130,5 @@ NS.getWeaponLoadoutForSpec = getWeaponLoadoutForSpec
 NS.isItemAllowedForMainHand = isItemAllowedForMainHand
 NS.isItemAllowedForOffHand = isItemAllowedForOffHand
 NS.isArmorCandidateAllowedForClass = isArmorCandidateAllowedForClass
+NS.createPredictionContext = createPredictionContext
 

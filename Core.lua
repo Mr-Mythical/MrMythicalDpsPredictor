@@ -1070,6 +1070,10 @@ function NS.getCharacterSpecLabel()
 end
 
 function NS.onProfileContextChanged()
+  NS.predictionContextGeneration = (NS.predictionContextGeneration or 0) + 1
+  if NS.clearStatCaches then
+    NS.clearStatCaches()
+  end
   NS.baseDpsCacheDirty = true
   if NS._clearPredictionCache then
     NS._clearPredictionCache()

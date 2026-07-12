@@ -2,6 +2,9 @@ local ADDON_NAME, NS = ...
 
 local DEFAULT_BAG_SCAN_YIELD_EVERY = 40
 local COMBO_COUNT_YIELD_EVERY = 15000
+local MAX_LOADOUT_ITEM_DATA_RETRIES = 20
+local LOADOUT_ITEM_DATA_RETRY_DELAY = 0.05
+local LOADOUT_SCAN_SLICE_BUDGET_MS = 20
 local bagComboEstimateRunner = nil
 local bagComboEstimateToken = 0
 local cancelBagComboEstimate
@@ -976,7 +979,6 @@ local function makeCandidateFromRef(ref)
     bag = ref and ref.bag,
     slot = ref and ref.slot,
     slotId = ref and ref.slotId,
-    comparisonItem = ref and ref.comparisonItem,
   })
 end
 
@@ -985,7 +987,7 @@ function NS.makeCandidateFromGearRef(ref)
     return nil
   end
 
-  local scoreLink = ref.preview_link or ref.link
+  local scoreLink = ref.resolved_link or ref.preview_link or ref.link
   if ref.source == "loot" and ref.resolved_link then
     scoreLink = ref.resolved_link
   end
@@ -1001,6 +1003,10 @@ function NS.makeCandidateFromGearRef(ref)
   end
 
   local itemID = ref.item_id or tonumber(scoreLink:match("item:(%d+)"))
+  local displayLink = ref.preview_link or scoreLink
+  if ref.source == "loot" and ref.link and ref.link ~= displayLink then
+    displayLink = ref.preview_link or scoreLink
+  end
   local cand = makeCandidateFromRef({
     link = scoreLink,
     guid = ref.guid,
@@ -1040,9 +1046,22 @@ function NS.makeCandidateFromGearRef(ref)
   cand.crest_label = ref.crest_label
   cand.dps_per_crest = ref.dps_per_crest
   cand.ilvl_gain = ref.ilvl_gain
+  cand.preview_ilvl = ref.preview_ilvl
+  local displayIlvl = ref.preview_ilvl
+  if ref.source == "loot" and displayIlvl and displayIlvl > 0 then
+    cand.ilvl = displayIlvl
+    cand.preview_ilvl = displayIlvl
+  elseif not displayIlvl or displayIlvl <= 0 then
+    displayIlvl = NS.getItemIlvl and NS.getItemIlvl(displayLink) or 0
+    if displayIlvl and displayIlvl > 0 then
+      cand.ilvl = displayIlvl
+      cand.preview_ilvl = displayIlvl
+    end
+  end
   cand.upgrade_track = ref.upgrade_track
+    or (NS.getItemUpgradeTrackLabel and NS.getItemUpgradeTrackLabel(displayLink))
   cand.upgrade_rank = ref.upgrade_rank
-  cand.journal_link = ref.link
+  cand.journal_link = ref.journal_link or (ref.source == "loot" and ref.link ~= scoreLink and ref.link) or nil
   cand.instance_id = ref.instance_id
   cand.instance_name = ref.instance_name
   cand.dps_delta = ref.dps_delta
@@ -1050,7 +1069,7 @@ function NS.makeCandidateFromGearRef(ref)
   cand.slot_id = ref.slot_id or cand.slot_id
   cand.slot_label = ref.slot_label
   cand.item_id = itemID
-  cand.preview_link = ref.preview_link
+  cand.preview_link = displayLink
   if ref.name then
     cand.name = ref.name
   end
@@ -1960,6 +1979,7 @@ end
 function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
   opts = opts or {}
   local runner = opts.runner or { cancelled = false }
+  opts.runner = runner
 
   local function completeCancelled()
     if onComplete then
@@ -1981,6 +2001,46 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
   local slotCandidates, equippedBySlot, slotOrder, classToken, loadout =
     NS.buildSlotCandidates(specKey, candidatesBySlot, buildOpts)
 
+  if NS.statsFromItemLink then
+    local itemDataReady = true
+    local seenLinks = {}
+    local function checkCandidate(cand)
+      local link = cand and cand.link
+      if link and not seenLinks[link] then
+        seenLinks[link] = true
+        if not NS.statsFromItemLink(link) then
+          itemDataReady = false
+        end
+      end
+    end
+    for _, list in pairs(slotCandidates or {}) do
+      for _, cand in ipairs(list or {}) do
+        checkCandidate(cand)
+      end
+    end
+    for _, cand in pairs(equippedBySlot or {}) do
+      checkCandidate(cand)
+    end
+
+    if not itemDataReady then
+      local attempt = (tonumber(opts.item_data_retry_count) or 0) + 1
+      if attempt <= MAX_LOADOUT_ITEM_DATA_RETRIES then
+        opts.item_data_retry_count = attempt
+        C_Timer.After(LOADOUT_ITEM_DATA_RETRY_DELAY, function()
+          if runner.cancelled then
+            completeCancelled()
+          else
+            NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
+          end
+        end)
+      elseif onComplete then
+        onComplete(false, "Item data did not finish loading; please retry the loadout scan.")
+      end
+      return
+    end
+    opts.item_data_retry_count = nil
+  end
+
   refreshAllCandidateLoadoutFlags(slotCandidates, equippedBySlot)
 
   local nonWeaponSlotOrder = BAG_NONWEAPON_SLOT_ORDER
@@ -1991,8 +2051,25 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
   if NS.resetStatDeltaStats then
     NS.resetStatDeltaStats()
   end
+  local cacheStatsStart = NS.getPredictionCacheSnapshot and NS.getPredictionCacheSnapshot() or {
+    hits = 0,
+    misses = 0,
+    evictions = 0,
+    lookup_ms = 0,
+    insert_ms = 0,
+    eviction_ms = 0,
+    forward_count = 0,
+    forward_ms = 0,
+  }
+  local fusedProfileStart = {
+    hits = NS.fusedForwardProfile and NS.fusedForwardProfile.hits or 0,
+    misses = NS.fusedForwardProfile and NS.fusedForwardProfile.misses or 0,
+    changed_neurons = NS.fusedForwardProfile and NS.fusedForwardProfile.changed_neurons or 0,
+  }
   local zeroStats = makeZeroStats()
   local deltaCacheBySlot = {}
+  local weaponDeltaCache = {}
+  local weaponScoreCache = {}
   local perfState = {
     yield_every = DEFAULT_BAG_SCAN_YIELD_EVERY,
     batch_delay_sec = 0,
@@ -2018,6 +2095,34 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
   end
   refreshPerfState()
 
+  local function weaponCacheKeys(mhCand, ohCand)
+    local mhKey = mhCand and mhCand.key or "<nil-mh>"
+    local ohKey = ohCand and ohCand.key or "<nil-oh>"
+    return mhKey, ohKey
+  end
+
+  local function getWeaponDelta(mhCand, ohCand)
+    local mhKey, ohKey = weaponCacheKeys(mhCand, ohCand)
+    local byOffhand = weaponDeltaCache[mhKey]
+    if not byOffhand then
+      byOffhand = {}
+      weaponDeltaCache[mhKey] = byOffhand
+    end
+    local cached = byOffhand[ohKey]
+    if cached then
+      return cached
+    end
+    cached = NS.computeWeaponLoadoutDelta(
+      mhCand,
+      ohCand,
+      equippedBySlot[16],
+      equippedBySlot[17],
+      specKey
+    )
+    byOffhand[ohKey] = cached
+    return cached
+  end
+
   local function candidateToItemRef(cand)
     if not cand or not cand.link then
       return nil
@@ -2027,7 +2132,6 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       guid = cand.guid,
       bag = cand.bag,
       slot = cand.slot,
-      comparisonItem = cand.comparisonItem,
     }
   end
 
@@ -2054,14 +2158,6 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
     if NS.computeStatDelta and equipped then
       local candRef = candidateToItemRef(cand)
       local eqRef = candidateToItemRef(equipped)
-      if NS.resolveOwnedItemRef then
-        if candRef then
-          candRef = NS.resolveOwnedItemRef(candRef)
-        end
-        if eqRef then
-          eqRef = NS.resolveOwnedItemRef(eqRef)
-        end
-      end
       if candRef and eqRef then
         local delta = NS.computeStatDelta(candRef, eqRef)
         if delta then
@@ -2071,6 +2167,19 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       end
     end
 
+    local candStats = cand.stats
+    if cand.link and NS.statsFromItemLink then
+      candStats = NS.statsFromItemLink(cand.link)
+    end
+    local eqStats = equipped and equipped.stats or zeroStats
+    if equipped and equipped.link and NS.statsFromItemLink then
+      eqStats = NS.statsFromItemLink(equipped.link)
+    end
+    if not candStats or (equipped and not eqStats) then
+      -- Returning a conservative zero without caching lets a later pass retry
+      -- once item data is ready; stale/empty snapshots must not become scores.
+      return zeroStats
+    end
     if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug then
       NS.debugPrint(string.format(
         "%s: raw stat fallback for slot %s candidate %s",
@@ -2080,8 +2189,6 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       ))
     end
 
-    local candStats = cand.stats or zeroStats
-    local eqStats = (equipped and equipped.stats) or zeroStats
     cached = {
       primary_stat = (candStats.primary_stat or 0) - (eqStats.primary_stat or 0),
       crit = (candStats.crit or 0) - (eqStats.crit or 0),
@@ -2093,63 +2200,31 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
     return cached
   end
 
-  local marginalEvalStatsTmp = {
-    primary_stat = 0, crit = 0, haste = 0, mastery = 0, versatility = 0,
-  }
-
-  local function predictAssign(assign, revertSlotId)
-    local totalPrimary, totalCrit, totalHaste, totalMastery, totalVersatility = 0, 0, 0, 0, 0
-    local mhPick = assign[16] or equippedBySlot[16]
-    local ohPick = assign[17] or equippedBySlot[17]
-    if revertSlotId == 16 then
-      mhPick = equippedBySlot[16]
-    elseif revertSlotId == 17 then
-      ohPick = equippedBySlot[17]
-    end
-    if NS.computeWeaponLoadoutDelta then
-      local wdelta = NS.computeWeaponLoadoutDelta(mhPick, ohPick, equippedBySlot[16], equippedBySlot[17], specKey)
-      totalPrimary = wdelta.primary_stat or 0
-      totalCrit = wdelta.crit or 0
-      totalHaste = wdelta.haste or 0
-      totalMastery = wdelta.mastery or 0
-      totalVersatility = wdelta.versatility or 0
-    else
-      for _, sid in ipairs({ 16, 17 }) do
-        local pick = assign[sid] or equippedBySlot[sid]
-        if revertSlotId and sid == revertSlotId then
-          pick = equippedBySlot[sid]
-        end
-        local d = getCandidateDelta(sid, pick)
-        totalPrimary = totalPrimary + (d.primary_stat or 0)
-        totalCrit = totalCrit + (d.crit or 0)
-        totalHaste = totalHaste + (d.haste or 0)
-        totalMastery = totalMastery + (d.mastery or 0)
-        totalVersatility = totalVersatility + (d.versatility or 0)
-      end
-    end
-    for _, sid in ipairs(nonWeaponSlotOrder) do
-      local pick = assign[sid] or equippedBySlot[sid]
-      if revertSlotId and sid == revertSlotId then
-        pick = equippedBySlot[sid]
-      end
-      local d = getCandidateDelta(sid, pick)
-      totalPrimary = totalPrimary + (d.primary_stat or 0)
-      totalCrit = totalCrit + (d.crit or 0)
-      totalHaste = totalHaste + (d.haste or 0)
-      totalMastery = totalMastery + (d.mastery or 0)
-      totalVersatility = totalVersatility + (d.versatility or 0)
-    end
-    marginalEvalStatsTmp.primary_stat = (baseStats.primary_stat or 0) + totalPrimary
-    marginalEvalStatsTmp.crit = (baseStats.crit or 0) + totalCrit
-    marginalEvalStatsTmp.haste = (baseStats.haste or 0) + totalHaste
-    marginalEvalStatsTmp.mastery = (baseStats.mastery or 0) + totalMastery
-    marginalEvalStatsTmp.versatility = (baseStats.versatility or 0) + totalVersatility
-    return NS.getCachedPrediction(marginalEvalStatsTmp, specKey)
-  end
-
   local scoreStatsTmp = {
     primary_stat = 0, crit = 0, haste = 0, mastery = 0, versatility = 0,
   }
+
+  local function getWeaponScore(mhCand, ohCand)
+    local mhKey, ohKey = weaponCacheKeys(mhCand, ohCand)
+    local byOffhand = weaponScoreCache[mhKey]
+    if not byOffhand then
+      byOffhand = {}
+      weaponScoreCache[mhKey] = byOffhand
+    end
+    local cached = byOffhand[ohKey]
+    if cached ~= nil then
+      return cached
+    end
+    local wdelta = getWeaponDelta(mhCand, ohCand)
+    scoreStatsTmp.primary_stat = (baseStats.primary_stat or 0) + (wdelta.primary_stat or 0)
+    scoreStatsTmp.crit = (baseStats.crit or 0) + (wdelta.crit or 0)
+    scoreStatsTmp.haste = (baseStats.haste or 0) + (wdelta.haste or 0)
+    scoreStatsTmp.mastery = (baseStats.mastery or 0) + (wdelta.mastery or 0)
+    scoreStatsTmp.versatility = (baseStats.versatility or 0) + (wdelta.versatility or 0)
+    cached = NS.getCachedPrediction(scoreStatsTmp, specKey) - basePred
+    byOffhand[ohKey] = cached
+    return cached
+  end
 
   local function candStatScore(cand)
     local s = cand.stats
@@ -2158,60 +2233,21 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       + (s.mastery or 0) + (s.versatility or 0)
   end
 
-  local pruneScoreCache = {}
-
-  local function candSearchScore(slotId, cand)
-    if not cand or not cand.key then
-      return -math.huge
-    end
-    local slotCache = pruneScoreCache[slotId]
-    if not slotCache then
-      slotCache = {}
-      pruneScoreCache[slotId] = slotCache
-    end
-    local cached = slotCache[cand.key]
-    if cached ~= nil then
-      return cached
-    end
-    local score
-    if not cand.link then
-      score = -math.huge
-    elseif slotId == 16 or slotId == 17 then
-      local mhCand = slotId == 16 and cand or equippedBySlot[16]
-      local ohCand = slotId == 17 and cand or equippedBySlot[17]
-      if NS.computeWeaponLoadoutDelta then
-        local wdelta = NS.computeWeaponLoadoutDelta(mhCand, ohCand, equippedBySlot[16], equippedBySlot[17], specKey)
-        scoreStatsTmp.primary_stat = (baseStats.primary_stat or 0) + (wdelta.primary_stat or 0)
-        scoreStatsTmp.crit = (baseStats.crit or 0) + (wdelta.crit or 0)
-        scoreStatsTmp.haste = (baseStats.haste or 0) + (wdelta.haste or 0)
-        scoreStatsTmp.mastery = (baseStats.mastery or 0) + (wdelta.mastery or 0)
-        scoreStatsTmp.versatility = (baseStats.versatility or 0) + (wdelta.versatility or 0)
-        score = NS.getCachedPrediction(scoreStatsTmp, specKey) - basePred
-      else
-        score = candStatScore(cand)
-      end
-    else
-      local d = getCandidateDelta(slotId, cand)
-      scoreStatsTmp.primary_stat = (baseStats.primary_stat or 0) + (d.primary_stat or 0)
-      scoreStatsTmp.crit = (baseStats.crit or 0) + (d.crit or 0)
-      scoreStatsTmp.haste = (baseStats.haste or 0) + (d.haste or 0)
-      scoreStatsTmp.mastery = (baseStats.mastery or 0) + (d.mastery or 0)
-      scoreStatsTmp.versatility = (baseStats.versatility or 0) + (d.versatility or 0)
-      score = NS.getCachedPrediction(scoreStatsTmp, specKey) - basePred
-    end
-    slotCache[cand.key] = score
-    return score
-  end
-
   local function sortSlotCandidates(slotId)
     local list = slotCandidates[slotId]
     if not list or #list <= 1 then
       return
     end
     local equippedKey = equippedBySlot[slotId] and equippedBySlot[slotId].key or nil
+    local scores = {}
+    for _, cand in ipairs(list) do
+      -- Sorting only changes traversal order; use the allocation-free raw-stat
+      -- score here so scan setup does not run a synchronous model burst.
+      scores[cand] = candidateQuickScore(cand)
+    end
     table.sort(list, function(a, b)
-      local scoreA = candSearchScore(slotId, a)
-      local scoreB = candSearchScore(slotId, b)
+      local scoreA = scores[a]
+      local scoreB = scores[b]
       if scoreA ~= scoreB then
         return scoreA > scoreB
       end
@@ -2256,21 +2292,18 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
         if (not mhKey) or (not ohKey) or ohIsEmpty or mhKey ~= ohKey then
           if isValidWeaponCombo(mhCand, ohCand, classToken, specKey, loadout, requireOffhandFor1H) then
             local pairScore
+            local pairDelta
             if NS.computeWeaponLoadoutDelta then
-              local wdelta = NS.computeWeaponLoadoutDelta(mhCand, ohCand, equippedBySlot[16], equippedBySlot[17], specKey)
-              scoreStatsTmp.primary_stat = (baseStats.primary_stat or 0) + (wdelta.primary_stat or 0)
-              scoreStatsTmp.crit = (baseStats.crit or 0) + (wdelta.crit or 0)
-              scoreStatsTmp.haste = (baseStats.haste or 0) + (wdelta.haste or 0)
-              scoreStatsTmp.mastery = (baseStats.mastery or 0) + (wdelta.mastery or 0)
-              scoreStatsTmp.versatility = (baseStats.versatility or 0) + (wdelta.versatility or 0)
-              pairScore = NS.getCachedPrediction(scoreStatsTmp, specKey) - basePred
+              pairDelta = getWeaponDelta(mhCand, ohCand)
+              pairScore = candStatScore(mhCand) + candStatScore(ohCand)
             else
-              pairScore = candSearchScore(16, mhCand) + candSearchScore(17, ohCand)
+              pairScore = candStatScore(mhCand) + candStatScore(ohCand)
             end
             table.insert(pairs, {
               mh = mhCand,
               oh = ohCand,
               score = pairScore,
+              delta = pairDelta,
             })
           end
         end
@@ -2323,9 +2356,6 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       local bestPredLocal, bestAssignLocal, checkedLocal = nil, nil, 0
       local usedKeys = {}
       local currentAssign = {}
-      local evalStatsTmp = {
-        primary_stat = 0, crit = 0, haste = 0, mastery = 0, versatility = 0,
-      }
       local basePrimary = baseStats.primary_stat or 0
       local baseCrit = baseStats.crit or 0
       local baseHaste = baseStats.haste or 0
@@ -2334,6 +2364,12 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       local runningDelta = {
         primary = 0, crit = 0, haste = 0, mastery = 0, versatility = 0,
       }
+      local evalStatsTmp = {
+        primary_stat = 0, crit = 0, haste = 0, mastery = 0, versatility = 0,
+      }
+      local fastBestPred = -math.huge
+      local fastTolerance = tonumber(NS.FUSED_PREDICTION_ERROR_TOLERANCE) or 1e-5
+      local contenders = {}
 
       local function applyDeltaToRunning(d, sign)
         runningDelta.primary = runningDelta.primary + sign * (d.primary_stat or 0)
@@ -2343,24 +2379,19 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
         runningDelta.versatility = runningDelta.versatility + sign * (d.versatility or 0)
       end
 
-      local function syncEvalStatsFromRunning()
-        evalStatsTmp.primary_stat = basePrimary + runningDelta.primary
-        evalStatsTmp.crit = baseCrit + runningDelta.crit
-        evalStatsTmp.haste = baseHaste + runningDelta.haste
-        evalStatsTmp.mastery = baseMastery + runningDelta.mastery
-        evalStatsTmp.versatility = baseVersatility + runningDelta.versatility
-      end
-
-      local function resetRunningDeltaForWeapons()
+      local function resetRunningDeltaForWeapons(weaponDelta)
         runningDelta.primary = 0
         runningDelta.crit = 0
         runningDelta.haste = 0
         runningDelta.mastery = 0
         runningDelta.versatility = 0
         if NS.computeWeaponLoadoutDelta then
-          local mhPick = currentAssign[16] or equippedBySlot[16]
-          local ohPick = currentAssign[17] or equippedBySlot[17]
-          local wdelta = NS.computeWeaponLoadoutDelta(mhPick, ohPick, equippedBySlot[16], equippedBySlot[17], specKey)
+          local wdelta = weaponDelta
+          if not wdelta then
+            local mhPick = currentAssign[16] or equippedBySlot[16]
+            local ohPick = currentAssign[17] or equippedBySlot[17]
+            wdelta = getWeaponDelta(mhPick, ohPick)
+          end
           runningDelta.primary = wdelta.primary_stat or 0
           runningDelta.crit = wdelta.crit or 0
           runningDelta.haste = wdelta.haste or 0
@@ -2374,12 +2405,61 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
         end
       end
 
-      local function maybeYield()
+      local function pruneFastContenders()
+        local threshold = fastBestPred - fastTolerance
+        local writeIndex = 1
+        for readIndex = 1, #contenders do
+          local contender = contenders[readIndex]
+          if contender.fast_pred >= threshold then
+            contenders[writeIndex] = contender
+            writeIndex = writeIndex + 1
+          end
+        end
+        for index = writeIndex, #contenders do
+          contenders[index] = nil
+        end
+      end
+
+      local function recordFastContender(pred)
+        if pred > fastBestPred then
+          fastBestPred = pred
+          pruneFastContenders()
+        end
+        if pred < fastBestPred - fastTolerance then
+          return
+        end
+        local contender = {
+          fast_pred = pred,
+          stats = {
+            primary_stat = evalStatsTmp.primary_stat,
+            crit = evalStatsTmp.crit,
+            haste = evalStatsTmp.haste,
+            mastery = evalStatsTmp.mastery,
+            versatility = evalStatsTmp.versatility,
+          },
+          assign = {},
+        }
+        for _, sid in ipairs(slotOrder) do
+          contender.assign[sid] = currentAssign[sid]
+        end
+        contenders[#contenders + 1] = contender
+      end
+
+      local sliceStart = debugprofilestop and debugprofilestop() or nil
+      local checkedAtLastYield = 0
+      local function maybeYield(force, explicitTimeCheck)
         if runner.cancelled then
           coroutine.yield({ kind = "cancelled" })
         end
-        if checkedLocal > 0 and (checkedLocal % perfState.yield_every) == 0 then
+        local countBudgetReached = checkedLocal - checkedAtLastYield >= perfState.yield_every
+        local timeBudgetReached = false
+        if sliceStart and (force or explicitTimeCheck or (checkedLocal % 8) == 0) then
+          timeBudgetReached = (debugprofilestop() - sliceStart) >= LOADOUT_SCAN_SLICE_BUDGET_MS
+        end
+        if force or countBudgetReached or timeBudgetReached then
           coroutine.yield({ kind = "progress", checked = checkedLocal, total = totalCombinations })
+          checkedAtLastYield = checkedLocal
+          sliceStart = debugprofilestop and debugprofilestop() or nil
         end
       end
 
@@ -2399,17 +2479,16 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
         if not constraints.satisfiesAssign(currentAssign, embCount) then
           return
         end
-        syncEvalStatsFromRunning()
-        local pred = NS.getCachedPrediction(evalStatsTmp, specKey)
+        evalStatsTmp.primary_stat = basePrimary + runningDelta.primary
+        evalStatsTmp.crit = baseCrit + runningDelta.crit
+        evalStatsTmp.haste = baseHaste + runningDelta.haste
+        evalStatsTmp.mastery = baseMastery + runningDelta.mastery
+        evalStatsTmp.versatility = baseVersatility + runningDelta.versatility
+        local predict = NS.predictWithStatsFused or NS.predictWithStats or NS.getCachedPrediction
+        local pred = predict(evalStatsTmp, specKey)
         checkedLocal = checkedLocal + 1
+        recordFastContender(pred)
         maybeYield()
-        if isBetterLoadout(pred, currentAssign, bestPredLocal, bestAssignLocal) then
-          bestPredLocal = pred
-          bestAssignLocal = {}
-          for _, sid in ipairs(slotOrder) do
-            bestAssignLocal[sid] = currentAssign[sid]
-          end
-        end
       end
 
       local weaponPairs = buildWeaponPairs(requireOffhandFor1H)
@@ -2417,9 +2496,15 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
         return nil, nil, 0, false
       end
 
+      local traversalNodesUntilTimeCheck = 256
       local function dfsNonWeapon(idx, tierCount, embCount)
         if runner.cancelled then
           return
+        end
+        traversalNodesUntilTimeCheck = traversalNodesUntilTimeCheck - 1
+        if traversalNodesUntilTimeCheck <= 0 then
+          traversalNodesUntilTimeCheck = 256
+          maybeYield(false, true)
         end
         if idx > #nonWeaponSlotOrder then
           evalCurrent(embCount)
@@ -2476,7 +2561,7 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
         end
         currentAssign[16] = pair.mh
         currentAssign[17] = pair.oh
-        resetRunningDeltaForWeapons()
+        resetRunningDeltaForWeapons(pair.delta)
         local mhKey = pair.mh and pair.mh.key or nil
         local ohKey = pair.oh and pair.oh.key or nil
         local mhIsEmpty = mhKey and mhKey:sub(1, 6) == "empty:"
@@ -2492,7 +2577,7 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
           constraints.candTierAdds(pair.mh, 16) + constraints.candTierAdds(pair.oh, 17),
           constraints.candEmbAdds(pair.mh) + constraints.candEmbAdds(pair.oh)
         )
-        coroutine.yield({ kind = "progress", checked = checkedLocal, total = totalCombinations })
+        maybeYield(true)
         if mhKey and not mhIsEmpty then usedKeys[mhKey] = nil end
         if ohKey and not ohIsEmpty then usedKeys[ohKey] = nil end
         currentAssign[16] = nil
@@ -2500,6 +2585,17 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
         end
       end
 
+      local exactPredict = NS.predictWithStats or NS.getCachedPrediction
+      for index, contender in ipairs(contenders) do
+        local pred = exactPredict(contender.stats, specKey)
+        if isBetterLoadout(pred, contender.assign, bestPredLocal, bestAssignLocal) then
+          bestPredLocal = pred
+          bestAssignLocal = contender.assign
+        end
+        if (index % 8) == 0 then
+          maybeYield(true)
+        end
+      end
       return bestPredLocal, bestAssignLocal, checkedLocal, false
     end
 
@@ -2519,8 +2615,6 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
     if not bestAssign then
       return { kind = "done", hasResult = false }
     end
-
-    bestPred = predictAssign(bestAssign, nil)
 
     local slotRows = {}
     for _, slotId in ipairs(slotOrder) do
@@ -2561,12 +2655,17 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       end
     end
 
-    if NS.computeWeaponPairDpsDelta then
+    if NS.computeWeaponPairDpsDelta or NS.computeWeaponLoadoutDelta then
       local loadout = NS.getWeaponLoadoutForSpec and NS.getWeaponLoadoutForSpec(specKey)
       local mh = bestAssign[16]
       local oh = bestAssign[17]
       local is2H = mh and mh.link and NS.is2HWeapon and NS.is2HWeapon(mh.link)
-      local pairDps = NS.computeWeaponPairDpsDelta(mh, oh, equippedBySlot[16], equippedBySlot[17], specKey)
+      local pairDps
+      if NS.computeWeaponLoadoutDelta then
+        pairDps = getWeaponScore(mh, oh)
+      else
+        pairDps = NS.computeWeaponPairDpsDelta(mh, oh, equippedBySlot[16], equippedBySlot[17], specKey)
+      end
       local usePairLabel = loadout and loadout.dual_wield and not is2H
       if pairDps ~= nil then
         for _, row in ipairs(slotRows) do
@@ -2599,27 +2698,78 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
       spec_key = specKey,
       stat_delta_native = NS.statDeltaStats and NS.statDeltaStats.native or nil,
       stat_delta_fallback = NS.statDeltaStats and NS.statDeltaStats.fallback or nil,
+      stat_delta_cache_hits = NS.statDeltaStats and NS.statDeltaStats.cache_hits or nil,
+      stat_delta_cache_misses = NS.statDeltaStats and NS.statDeltaStats.cache_misses or nil,
     }
 
     local scanEndTime = (debugprofilestop and debugprofilestop()) or GetTime()
     local scanElapsed = scanEndTime - scanStartTime
     if scanElapsed <= 0 then scanElapsed = 1e-6 end
-    local cacheStats = NS.predictionCacheStats or {}
+    local cacheStatsEnd = NS.getPredictionCacheSnapshot and NS.getPredictionCacheSnapshot() or {}
+    local function counterDelta(field)
+      local startValue = cacheStatsStart[field] or 0
+      local endValue = cacheStatsEnd[field] or 0
+      local delta = endValue - startValue
+      if delta < 0 then
+        return endValue
+      end
+      return delta
+    end
+    local statStats = NS.statDeltaStats or {}
+    local fusedStats = NS.fusedForwardProfile or {}
+    local fusedHits = math.max(0, (fusedStats.hits or 0) - fusedProfileStart.hits)
+    local fusedMisses = math.max(0, (fusedStats.misses or 0) - fusedProfileStart.misses)
+    local fusedChanged = math.max(
+      0,
+      (fusedStats.changed_neurons or 0) - fusedProfileStart.changed_neurons
+    )
     NS.lastLoadoutScanStats = {
       combinations_checked = checked,
       elapsed_ms = debugprofilestop and scanElapsed or (scanElapsed * 1000),
       combos_per_sec = checked / (debugprofilestop and (scanElapsed / 1000) or scanElapsed),
-      cache_hits = cacheStats.hits or 0,
-      cache_misses = cacheStats.misses or 0,
+      cache_hits = counterDelta("hits"),
+      cache_misses = counterDelta("misses"),
+      cache_evictions = counterDelta("evictions"),
+      cache_lookup_ms = counterDelta("lookup_ms"),
+      cache_insert_ms = counterDelta("insert_ms"),
+      cache_eviction_ms = counterDelta("eviction_ms"),
+      cache_size = cacheStatsEnd.current_size or 0,
+      cache_peak_size = cacheStatsEnd.peak_size or 0,
+      forward_calls = counterDelta("forward_count"),
+      forward_ms = counterDelta("forward_ms"),
+      stat_delta_ms = statStats.totalMs or 0,
+      stat_delta_cache_hits = statStats.cache_hits or 0,
+      stat_delta_cache_misses = statStats.cache_misses or 0,
+      fused_reference_hits = fusedHits,
+      fused_reference_builds = fusedMisses,
+      fused_avg_changed_neurons = checked > 0 and (fusedChanged / checked) or 0,
     }
     if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug then
       NS.debugPrint(string.format(
-        "loadout scan: %d combos in %.1fms (%.0f/s) cache %d/%d",
+        "loadout scan: %d combos in %.1fms (%.0f/s) cache %d/%d, %d evictions",
         checked,
         NS.lastLoadoutScanStats.elapsed_ms,
         NS.lastLoadoutScanStats.combos_per_sec,
         NS.lastLoadoutScanStats.cache_hits,
-        (NS.lastLoadoutScanStats.cache_hits or 0) + (NS.lastLoadoutScanStats.cache_misses or 0)
+        (NS.lastLoadoutScanStats.cache_hits or 0) + (NS.lastLoadoutScanStats.cache_misses or 0),
+        NS.lastLoadoutScanStats.cache_evictions
+      ))
+      NS.debugPrint(string.format(
+        "inference phases: forward %.1fms/%d, lookup %.1fms, insert %.1fms, evict %.1fms, stat delta %.1fms (%d/%d cache)",
+        NS.lastLoadoutScanStats.forward_ms,
+        NS.lastLoadoutScanStats.forward_calls,
+        NS.lastLoadoutScanStats.cache_lookup_ms,
+        NS.lastLoadoutScanStats.cache_insert_ms,
+        NS.lastLoadoutScanStats.cache_eviction_ms,
+        NS.lastLoadoutScanStats.stat_delta_ms,
+        NS.lastLoadoutScanStats.stat_delta_cache_hits,
+        NS.lastLoadoutScanStats.stat_delta_cache_hits + NS.lastLoadoutScanStats.stat_delta_cache_misses
+      ))
+      NS.debugPrint(string.format(
+        "fused inference: %d reference hits, %d builds, %.1f changed neurons/call",
+        NS.lastLoadoutScanStats.fused_reference_hits,
+        NS.lastLoadoutScanStats.fused_reference_builds,
+        NS.lastLoadoutScanStats.fused_avg_changed_neurons
       ))
     end
 

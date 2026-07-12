@@ -42,6 +42,7 @@ do
   local predictionCache = {}
   local cacheOrder = 0
   local cacheCount = 0
+  NS.tooltipPredictionCacheStats = NS.tooltipPredictionCacheStats or { hits = 0, misses = 0 }
 
   local function evictOldestCache()
     if cacheCount <= CACHE_SIZE then return end
@@ -62,6 +63,8 @@ do
     predictionCache = {}
     cacheCount = 0
     cacheOrder = 0
+    NS.tooltipPredictionCacheStats.hits = 0
+    NS.tooltipPredictionCacheStats.misses = 0
   end
 
   NS._clearPredictionCache = clearPredictionCache
@@ -163,15 +166,21 @@ do
   end
 
   local function buildPredictionLines(itemLink, itemGuid, itemData, specKeys)
+    local profileStart
+    local cacheStart
+    if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug and debugprofilestop then
+      profileStart = debugprofilestop()
+      cacheStart = NS.getPredictionCacheSnapshot and NS.getPredictionCacheSnapshot() or {}
+    end
     local lines = {}
     local showProfileLabel = #specKeys > 1
+    local predictionContext = NS.createPredictionContext and NS.createPredictionContext() or nil
 
     for _, specKey in ipairs(specKeys) do
       local pred = NS.Predictor.PredictItemDelta({
         link = itemLink,
         guid = itemGuid,
-        comparisonItem = (type(itemData) == "table" and (itemData.item or itemData)) or nil,
-      }, specKey)
+      }, specKey, predictionContext)
       if pred then
         if type(pred) == "table" and pred[1] then
           for _, p in ipairs(pred) do
@@ -214,6 +223,33 @@ do
         text = NS.MSG_PROFILE_LOW_CONFIDENCE,
         r = 0.85, g = 0.75, b = 0.35,
       }
+    end
+
+    if profileStart then
+      local cacheEnd = NS.getPredictionCacheSnapshot and NS.getPredictionCacheSnapshot() or {}
+      local function delta(key)
+        local value = (cacheEnd[key] or 0) - (cacheStart[key] or 0)
+        if value < 0 then
+          return cacheEnd[key] or 0
+        end
+        return value
+      end
+      NS.lastTooltipInferenceStats = {
+        cache_hit = false,
+        elapsed_ms = debugprofilestop() - profileStart,
+        forward_calls = delta("forward_count"),
+        forward_ms = delta("forward_ms"),
+        cache_hits = delta("hits"),
+        cache_misses = delta("misses"),
+      }
+      NS.debugPrint(string.format(
+        "tooltip inference: cold %.2fms, forward %.2fms/%d, cache %d/%d",
+        NS.lastTooltipInferenceStats.elapsed_ms,
+        NS.lastTooltipInferenceStats.forward_ms,
+        NS.lastTooltipInferenceStats.forward_calls,
+        NS.lastTooltipInferenceStats.cache_hits,
+        NS.lastTooltipInferenceStats.cache_hits + NS.lastTooltipInferenceStats.cache_misses
+      ))
     end
 
     return lines
@@ -260,11 +296,32 @@ do
       return
     end
     local predictionLines = nil
+    local lookupStart
+    if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug and debugprofilestop then
+      lookupStart = debugprofilestop()
+    end
     local cached = predictionCache[cacheKey]
     if cached then
+      NS.tooltipPredictionCacheStats.hits = NS.tooltipPredictionCacheStats.hits + 1
       cached.order = cacheOrder
       cacheOrder = cacheOrder + 1
       predictionLines = cached.lines
+      if lookupStart then
+        NS.lastTooltipInferenceStats = {
+          cache_hit = true,
+          elapsed_ms = debugprofilestop() - lookupStart,
+          forward_calls = 0,
+          forward_ms = 0,
+          cache_hits = 1,
+          cache_misses = 0,
+        }
+        NS.debugPrint(string.format(
+          "tooltip inference: warm cache hit in %.2fms",
+          NS.lastTooltipInferenceStats.elapsed_ms
+        ))
+      end
+    else
+      NS.tooltipPredictionCacheStats.misses = NS.tooltipPredictionCacheStats.misses + 1
     end
 
     local function publishBlock(lines)

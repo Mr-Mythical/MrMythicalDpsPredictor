@@ -290,7 +290,10 @@ local function startVaultPopupScan()
       if session.index > runner.scoreTotal then
         break
       end
-      NS.scoreGearRefSessionStep(session, perf.score_batch)
+      local _, _, waitingForItemData = NS.scoreGearRefSessionStep(session, perf.score_batch)
+      if waitingForItemData then
+        break
+      end
     end
     local scored = math.min(session.index - 1, runner.scoreTotal)
     if session.index <= runner.scoreTotal then

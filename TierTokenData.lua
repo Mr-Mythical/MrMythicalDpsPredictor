@@ -74,18 +74,28 @@ local function readBonusIDsFromLink(link)
   if not fields then
     return nil
   end
-  local numBonus = tonumber(fields[13]) or 0
-  if numBonus <= 0 then
-    return nil
-  end
-  local bonusIDs = {}
-  for i = 1, numBonus do
-    local bonusID = tonumber(fields[13 + i])
-    if bonusID then
-      bonusIDs[i] = bonusID
+
+  local function readFromCountIndex(countIndex)
+    local numBonus = tonumber(fields[countIndex]) or 0
+    if numBonus <= 0 or numBonus > 10 then
+      return nil
     end
+    local bonusIDs = {}
+    for i = 1, numBonus do
+      local bonusID = tonumber(fields[countIndex + i])
+      if bonusID then
+        bonusIDs[i] = bonusID
+      end
+    end
+    return #bonusIDs > 0 and bonusIDs or nil
   end
-  return #bonusIDs > 0 and bonusIDs or nil
+
+  -- Standard: creation context at 12, bonus count at 13. Some links pack context at 13 with count at 14.
+  local bonusIDs = readFromCountIndex(13)
+  if bonusIDs then
+    return bonusIDs
+  end
+  return readFromCountIndex(14)
 end
 
 local function buildPieceLinkFromToken(tokenLink, pieceItemID)
@@ -105,10 +115,16 @@ local function buildPieceLinkFromToken(tokenLink, pieceItemID)
     return string.format("|Hitem:%d|h[%s]|h", pieceItemID, name or pieceItemID)
   end
 
+  local creationContext = tokenFields[12] or "0"
+  if tonumber(tokenFields[13]) and tonumber(tokenFields[13]) > 10 then
+    creationContext = tokenFields[13]
+  end
+
   local out = { tostring(pieceItemID) }
-  for i = 2, 12 do
+  for i = 2, 11 do
     out[i] = tokenFields[i] or "0"
   end
+  out[12] = creationContext
   out[13] = tostring(#bonusIDs)
   for i, bonusID in ipairs(bonusIDs) do
     out[13 + i] = tostring(bonusID)

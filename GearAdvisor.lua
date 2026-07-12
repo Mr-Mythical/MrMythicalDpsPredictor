@@ -1544,7 +1544,7 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
 
     local tex = iconBtn:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(iconBtn)
-    local iconTexture = cand and cand.link and GetItemIcon(cand.link) or nil
+    local iconTexture = cand and (cand.preview_link or cand.link) and GetItemIcon(cand.preview_link or cand.link) or nil
     if iconTexture then
       tex:SetTexture(iconTexture)
     end
@@ -1618,7 +1618,7 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
           cand, iconInfo, isVault, isVaultWinner, slotId
         )
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetHyperlink(cand.link)
+        GameTooltip:SetHyperlink(cand.preview_link or cand.link)
       end
     end)
     iconBtn:SetScript("OnLeave", function(self)
@@ -1687,6 +1687,39 @@ local function attachScoredRowsToCandidates(rows)
           end
         end
         if scored then
+          if scored.link and NS.makeCandidateFromGearRef
+            and (scored.source == "loot" or scored.link ~= cand.link) then
+            local refreshed = NS.makeCandidateFromGearRef({
+              source = scored.source or cand.source,
+              source_label = scored.source_label or cand.source_label,
+              link = scored.journal_link or cand.journal_link or cand.link,
+              journal_link = scored.journal_link or cand.journal_link,
+              resolved_link = scored.link,
+              preview_link = scored.preview_display_link or scored.link,
+              item_id = scored.link and tonumber(scored.link:match("item:(%d+)")) or cand.item_id,
+              name = scored.name or cand.name,
+              quality = scored.quality or cand.quality,
+              instance_id = scored.instance_id or cand.instance_id,
+              instance_name = scored.instance_name or cand.instance_name,
+              upgrade_track = scored.upgrade_track or cand.upgrade_track,
+              preview_ilvl = scored.preview_ilvl or scored.ilvl,
+              dps_delta = scored.dps_delta,
+              is_upgrade = scored.is_upgrade,
+              slot_id = scored.slot_id,
+              slot_label = scored.slot_label,
+              claimable = scored.claimable,
+              preview = scored.preview,
+            })
+            if refreshed then
+              cand = refreshed
+            end
+          end
+          cand.link = scored.link or cand.link
+          cand.preview_link = scored.preview_display_link or scored.link or cand.preview_link
+          cand.journal_link = scored.journal_link or cand.journal_link
+          cand.ilvl = scored.ilvl or cand.ilvl
+          cand.preview_ilvl = scored.preview_ilvl or cand.preview_ilvl
+          cand.upgrade_track = scored.upgrade_track or cand.upgrade_track
           cand.dps_delta = scored.dps_delta
           cand.is_upgrade = scored.is_upgrade
           cand.slot_id = scored.slot_id or cand.slot_id
@@ -2306,7 +2339,8 @@ local function finishRankScan(runner, rows, errors)
   upgradeRows = rows or {}
   attachScoredRowsToCandidates(upgradeRows)
   if NS.applyPairedWeaponCandidateScoring then
-    NS.applyPairedWeaponCandidateScoring(candidatesBySlot, runner.specKey)
+    local predictionContext = runner.scoreSession and runner.scoreSession.predictionContext or nil
+    NS.applyPairedWeaponCandidateScoring(candidatesBySlot, runner.specKey, predictionContext)
   end
   rebuildCandidateRowsFromSlots()
   NS.applyAdvisorSelectionDefaults(candidateRows, candidatesBySlot, { reset_equipped_baselines = true })
@@ -2347,7 +2381,11 @@ local function startRankScan(runner, refs)
       if session.index > runner.scoreTotal then
         break
       end
-      NS.scoreGearRefSessionStep(session, perf.score_batch)
+      local _, _, waitingForItemData = NS.scoreGearRefSessionStep(session, perf.score_batch)
+      if waitingForItemData then
+        -- Item data is still loading; yield before retrying this same item.
+        break
+      end
     end
     local scored = math.min(session.index - 1, runner.scoreTotal)
     if session.index <= runner.scoreTotal then

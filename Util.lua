@@ -69,15 +69,34 @@ NS.ITEM_STAT_KEY_TO_FEATURE = {
   ITEM_MOD_VERSATILITY_SHORT = "versatility",
 }
 
+local PRIMARY_STAT_ITEM_KEY = {
+  [LE_UNIT_STAT_STRENGTH or 1] = "ITEM_MOD_STRENGTH_SHORT",
+  [LE_UNIT_STAT_AGILITY or 2] = "ITEM_MOD_AGILITY_SHORT",
+  [LE_UNIT_STAT_INTELLECT or 4] = "ITEM_MOD_INTELLECT_SHORT",
+}
+
+function NS.getActivePrimaryStatItemKey()
+  if not GetSpecialization or not GetSpecializationInfo then
+    return nil
+  end
+  local specIndex = GetSpecialization()
+  if not specIndex then
+    return nil
+  end
+  local primaryStat = select(7, GetSpecializationInfo(specIndex))
+  return PRIMARY_STAT_ITEM_KEY[primaryStat]
+end
+
 function NS.applyItemStatMods(targetStats, sourceTable, sign)
   sign = sign or 1
   if type(targetStats) ~= "table" or type(sourceTable) ~= "table" then
     return
   end
+  local activePrimaryKey = NS.getActivePrimaryStatItemKey()
   for k, v in pairs(sourceTable) do
     if type(k) == "string" and type(v) == "number" then
       local feature = NS.ITEM_STAT_KEY_TO_FEATURE[k]
-      if feature then
+      if feature and (feature ~= "primary_stat" or not activePrimaryKey or k == activePrimaryKey) then
         targetStats[feature] = (targetStats[feature] or 0) + sign * v
       end
     end
