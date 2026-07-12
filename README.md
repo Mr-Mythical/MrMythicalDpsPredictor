@@ -44,7 +44,7 @@ The **Dungeons & Raids** tab scans journal loot from a single instance or the **
 
 ## Spend your crests where they matter most
 
-Crests are limited, so spending them well matters. The **Crest Upgrades** tab reads your currencies, evaluates every upgrade you can afford, and builds a step-by-step plan ranked by **DPS gained per crest spent**. No more guessing whether the boots or the shoulders come first.
+Crests are limited, so spending them well matters. The **Crest Upgrades** tab reads your currencies, evaluates every upgrade you can afford, and builds a step-by-step plan ranked by **DPS gained per crest spent**.
 
 ![Crest Upgrades tab showing a ranked step-by-step upgrade plan with DPS per crest](Screenshots/crest-upgrades.png)
 
