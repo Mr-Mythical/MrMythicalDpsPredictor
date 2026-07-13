@@ -1,6 +1,6 @@
 local ADDON_NAME, NS = ...
 
-NS.BRAND = "Mr. Mythical: DPS Predictor"
+NS.BRAND = "Mr. Mythical: DPS Predictor & Gearing Dashboard"
 NS.DASHBOARD_SLASH = "/mrdps"
 NS.DISCLAIMER_SHORT = "Estimates only."
 
@@ -589,7 +589,7 @@ NS.CREST_HEADER_COST = "Cost"
 NS.CREST_HEADER_DPS = "DPS/crest"
 NS.CREST_PLAN_TITLE = "Plan"
 NS.MSG_CREST_LITE_TITLE = "Crest plan"
-NS.MSG_CREST_LITE_OPEN_ADVISOR = "Gear Advisor"
+NS.MSG_CREST_LITE_OPEN_ADVISOR = "Gearing Dashboard"
 NS.MSG_CREST_OTHER_UPGRADES = "Other upgrades"
 NS.MSG_CREST_MODE_HINT = "Crest spending plan."
 NS.MSG_CREST_SCANNING = "Scanning…"
@@ -1114,7 +1114,7 @@ eventFrame:SetScript("OnEvent", function(_, event)
       ))
     end
     NS.debugPrint(string.format(
-      "%s loaded (%s). Type %s to open Gear Advisor.",
+      "%s loaded (%s). Type %s to open the gearing dashboard.",
       NS.BRAND,
       NS.getAddonVersion(),
       NS.DASHBOARD_SLASH

@@ -1,6 +1,6 @@
 ## Interface: 120007
-## Title: Mr. Mythical: DPS Predictor
-## Notes: Neural network DPS Prediction in your tooltips, not just stat weights. Instant upgrade checks, full raid & M+ season scans, crest upgrade planning, and Great Vault advice.
+## Title: Mr. Mythical: DPS Predictor & Gearing Dashboard
+## Notes: Gearing dashboard for your best loadout, season scans, crest upgrades, and Great Vault advice — powered by a neural-net DPS prediction model.
 ## Author: Braunerr
 ## Version: @project-version@
 ## IconTexture: Logo.tga

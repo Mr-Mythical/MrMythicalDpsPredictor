@@ -1,10 +1,10 @@
-# Mr. Mythical: DPS Predictor
+# Mr. Mythical: DPS Predictor & Gearing Dashboard
 
-**A neural network in your tooltips. Instant DPS predictions for every item, every drop, and every crest you spend.**
+**A gearing dashboard to find your best loadout, scan the season, plan crest upgrades, and pick the right Great Vault reward — powered by a neural-net DPS prediction model.**
 
 Loot drops. Everyone's waiting. Is it an upgrade?
 
-Mr. Mythical: DPS Predictor answers that question the moment you hover an item, and it goes far beyond one at a time comparisons: it can scan **every drop in the current raid and Mythic+ season** to build your best possible gear set, and rank **every crest upgrade you can afford** by DPS gained per crest spent.
+Mr. Mythical: DPS Predictor & Gearing Dashboard answers that on every tooltip, and the same model powers everything in the dashboard: scan **every drop in the current raid and Mythic+ season** to build your best possible gear set, rank **every crest upgrade you can afford** by DPS gained per crest spent, and pick the right Great Vault reward before you lock it in.
 
 ---
 
@@ -20,7 +20,7 @@ Mr. Mythical: DPS Predictor answers that question the moment you hover an item, 
 
 Most gear tools multiply your stats by fixed weights and add them up. That approximation breaks down constantly: the value of a stat drops as you stack it, haste and mastery interact differently for every spec, and the "right" answer depends on your entire gear set, not one number per stat.
 
-Mr. Mythical: DPS Predictor uses a **neural network trained on large batches of SimulationCraft data**, with dedicated profiles for every DPS and tank spec, including hero talent variants. The trained model ships inside the addon and runs entirely on your machine. There are no server calls, no importing weights, and nothing to configure. Because the model has seen how stats actually interact across thousands of simulated gear sets, it captures diminishing returns and stat synergies that flat weights simply can't.
+Mr. Mythical: DPS Predictor & Gearing Dashboard uses a **neural network trained on large batches of SimulationCraft data**, with dedicated profiles for every DPS and tank spec, including hero talent variants. The trained model ships inside the addon and runs entirely on your machine. There are no server calls, no importing weights, and nothing to configure. Because the model has seen how stats actually interact across thousands of simulated gear sets, it captures diminishing returns and stat synergies that flat weights simply can't.
 
 It's not a full simulation, but it's dramatically closer to one than stat weights, and it's fast enough to answer while the loot roll is still open.
 
@@ -30,11 +30,11 @@ Hover any item and see its predicted DPS change versus what you're wearing, righ
 
 ![Item tooltip showing +1335 DPS versus the equipped item](Screenshots/tooltip-comparison.png)
 
-## Gear Advisor: your best loadout, not just single swaps
+## Your best loadout, not just single swaps
 
-Open the Gear Advisor with `/mrdps`. The **Bags** tab scans everything you own and searches for your best possible *combination* of gear. This matters because upgrades aren't independent: swapping your belt can change which ring is best. The Find Loadout engine evaluates full loadouts, so slot synergies count, then shows you exactly what to equip, with one-click **Equip** buttons.
+Open the gearing dashboard with `/mrdps`. The **Bags** tab scans everything you own and searches for your best possible *combination* of gear. This matters because upgrades aren't independent: swapping your belt can change which ring is best. The Find Loadout engine evaluates full loadouts, so slot synergies count, then shows you exactly what to equip, with one-click **Equip** buttons.
 
-![Gear Advisor Bags tab showing the best loadout with per-slot recommendations and Equip buttons](Screenshots/gear-advisor-bags.png)
+![Gearing Dashboard Bags tab showing the best loadout with per-slot recommendations and Equip buttons](Screenshots/gear-advisor-bags.png)
 
 ## Scan the entire season for your best possible gear
 
@@ -69,7 +69,7 @@ When you open the Great Vault, the addon evaluates every reward on offer and tel
 
 ## Commands
 
-- `/mrdps` — open the Gear Advisor dashboard
+- `/mrdps` — open the gearing dashboard
 
 
 

@@ -1,7 +1,7 @@
 local ADDON_NAME, NS = ...
 local didWarnTooltipError = false
 do
-  local HEADER_TEXT = NS.BRAND or "Mr. Mythical: DPS Predictor"
+  local HEADER_TEXT = NS.BRAND or "Mr. Mythical: DPS Predictor & Gearing Dashboard"
   local HEADER_COLOR = { 1, 0.92, 0.55 }
 
   local function ownerHasMouse(owner)
