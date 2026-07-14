@@ -1,6 +1,6 @@
 # Mr. Mythical: DPS Predictor & Gearing Dashboard
 
-**A gearing dashboard to find your best loadout, scan the season, plan crest upgrades, and pick the right Great Vault reward — powered by a neural-net DPS prediction model.**
+**Gearing dashboard for your best loadout from your bags or the season, optimal crest upgrades, and Great Vault advice - powered by a neural-net DPS prediction model.**
 
 Loot drops. Everyone's waiting. Is it an upgrade?
 
@@ -28,31 +28,31 @@ It's not a full simulation, but it's dramatically closer to one than stat weight
 
 Hover any item and see its predicted DPS change versus what you're wearing, right on the tooltip. Works in your bags, on loot, in the Adventure Journal, and in chat links.
 
-![Item tooltip showing +1335 DPS versus the equipped item](Screenshots/tooltip-comparison.png)
+Item tooltip showing +1335 DPS versus the equipped item
 
 ## Your best loadout, not just single swaps
 
 Open the gearing dashboard with `/mrdps`. The **Bags** tab scans everything you own and searches for your best possible *combination* of gear. This matters because upgrades aren't independent: swapping your belt can change which ring is best. The Find Loadout engine evaluates full loadouts, so slot synergies count, then shows you exactly what to equip, with one-click **Equip** buttons.
 
-![Gearing Dashboard Bags tab showing the best loadout with per-slot recommendations and Equip buttons](Screenshots/gear-advisor-bags.png)
+Gearing Dashboard Bags tab showing the best loadout with per-slot recommendations and Equip buttons
 
 ## Scan the entire season for your best possible gear
 
 The **Dungeons & Raids** tab scans journal loot from a single instance or the **entire current season** and finds the strongest set of drops for your character. Preview items on Champion, Hero, or Myth upgrade tracks, and see exactly which boss and instance every recommended piece comes from, so you know precisely which dungeons to run and which bosses to target.
 
-![Dungeons & Raids tab showing best-in-slot recommendations from across the season with their sources](Screenshots/gear-advisor-dungeons-raids.png)
+Dungeons & Raids tab showing best-in-slot recommendations from across the season with their sources
 
 ## Spend your crests where they matter most
 
 Crests are limited, so spending them well matters. The **Crest Upgrades** tab reads your currencies, evaluates every upgrade you can afford, and builds a step-by-step plan ranked by **DPS gained per crest spent**.
 
-![Crest Upgrades tab showing a ranked step-by-step upgrade plan with DPS per crest](Screenshots/crest-upgrades.png)
+Crest Upgrades tab showing a ranked step-by-step upgrade plan with DPS per crest
 
 ## Great Vault, decided
 
 When you open the Great Vault, the addon evaluates every reward on offer and tells you which one is your biggest DPS gain, before you lock in your pick.
 
-![Great Vault window with the addon recommending the highest-DPS reward](Screenshots/great-vault.png)
+Great Vault window with the addon recommending the highest-DPS reward
 
 ## Features at a glance
 

@@ -1,6 +1,6 @@
 ## Interface: 120007
 ## Title: Mr. Mythical: DPS Predictor & Gearing Dashboard
-## Notes: Gearing dashboard for your best loadout, season scans, crest upgrades, and Great Vault advice — powered by a neural-net DPS prediction model.
+## Notes: Gearing dashboard for your best loadout from your bags or the season, optimal crest upgrades, and Great Vault advice - powered by a neural-net DPS prediction model.
 ## Author: Braunerr
 ## Version: @project-version@
 ## IconTexture: Logo.tga
