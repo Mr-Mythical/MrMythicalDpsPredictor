@@ -64,23 +64,6 @@ if type(MR_MYTHICAL_DPS_CONFIG.profile_by_prefix) ~= "table" then
   MR_MYTHICAL_DPS_CONFIG.profile_by_prefix = {}
 end
 
--- Migrate legacy saved vars.
-if MR_MYTHICAL_DPS_CONFIG.spec_key and type(MR_MYTHICAL_DPS_CONFIG.spec_key) == "string" then
-  local legacy = MR_MYTHICAL_DPS_CONFIG.spec_key
-  local prefix = legacy:match("^(MID1_[^_]+_[^_]+_[^_]+)")
-  if prefix and not MR_MYTHICAL_DPS_CONFIG.profile_by_prefix[prefix] then
-    MR_MYTHICAL_DPS_CONFIG.profile_by_prefix[prefix] = legacy
-  end
-  MR_MYTHICAL_DPS_CONFIG.spec_key = nil
-end
-MR_MYTHICAL_DPS_CONFIG.seen_disclaimer = nil
-MR_MYTHICAL_DPS_CONFIG.loadout_polish_enabled = nil
-MR_MYTHICAL_DPS_CONFIG.loadout_deep_search = nil
-MR_MYTHICAL_DPS_CONFIG.loadout_trim_enabled = nil
-MR_MYTHICAL_DPS_CONFIG.loadout_trim_auto = nil
-MR_MYTHICAL_DPS_CONFIG.loadout_per_slot_cap = nil
-MR_MYTHICAL_DPS_CONFIG.loadout_weapon_pair_cap = nil
-
 if MR_MYTHICAL_DPS_CONFIG.scan_performance_mode == nil then
   local legacyYield = tonumber(MR_MYTHICAL_DPS_CONFIG.loadout_scan_yield_every)
     or tonumber(MR_MYTHICAL_DPS_CONFIG.bag_scan_yield_every)
