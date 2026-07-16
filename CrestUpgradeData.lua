@@ -1,7 +1,5 @@
 local ADDON_NAME, NS = ...
 
--- Midnight S1 crest upgrade data. Populated from C_ItemUpgrade APIs when possible;
--- MIDNIGHT_CREST_TRACKS is a manual fallback from the in-game upgrade UI (update each season).
 NS.CREST_UPGRADE_COST_AMOUNT = 20
 NS.CREST_ACCOUNT_DISCOUNT_MULTIPLIER = 0.5
 
