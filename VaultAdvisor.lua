@@ -43,9 +43,6 @@ local function setVaultPopupBody(text, r, g, b)
   if vaultPopup.resultFrame then
     vaultPopup.resultFrame:Hide()
   end
-  if vaultPopup.pickNote then
-    vaultPopup.pickNote:Show()
-  end
 end
 
 local function showVaultPopupResult(row)
@@ -73,9 +70,6 @@ local function showVaultPopupResult(row)
   if vaultPopup.resultSlot then
     vaultPopup.resultSlot:SetText(row.slot_label or "")
     vaultPopup.resultSlot:SetTextColor(0.55, 0.58, 0.65)
-  end
-  if vaultPopup.pickNote then
-    vaultPopup.pickNote:Hide()
   end
   if vaultPopup.resultDelta then
     if row.dps_delta ~= nil then
@@ -109,11 +103,6 @@ local function ensureVaultPopup()
   title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -12)
   title:SetText("Great Vault")
   title:SetTextColor(0.9, 0.78, 1)
-
-  local brand = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  brand:SetPoint("TOPRIGHT", f, "TOPRIGHT", -36, -14)
-  brand:SetText(NS.BRAND)
-  brand:SetTextColor(0.5, 0.52, 0.58)
 
   local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
@@ -171,18 +160,9 @@ local function ensureVaultPopup()
   advisorBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 8)
   advisorBtn:SetText("Gearing Dashboard")
   advisorBtn:SetScript("OnClick", function()
-    NS.openGearAdvisor()
+    NS.openGearAdvisor(nil, "bags")
   end)
   f.advisorBtn = advisorBtn
-
-  local pickNote = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  pickNote:SetPoint("BOTTOMLEFT", advisorBtn, "TOPLEFT", 0, 4)
-  pickNote:SetPoint("RIGHT", f, "RIGHT", -12, 0)
-  pickNote:SetJustifyH("LEFT")
-  pickNote:SetWordWrap(true)
-  pickNote:SetText(NS.MSG_VAULT_PICK_ONE)
-  pickNote:SetTextColor(0.55, 0.58, 0.65)
-  f.pickNote = pickNote
 
   vaultPopup = f
   return f
