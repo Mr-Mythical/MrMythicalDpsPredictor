@@ -103,7 +103,6 @@ local function buildCandidateTooltipExtraLines(cand, iconInfo, isVault, isVaultW
     local sourceLabel = cand.source_label or SOURCE_LABELS[cand.source] or cand.source
     if isVault then
       addAdvisorTooltipLine(lines, sourceLabel or "Great Vault", 0.75, 0.65, 0.95)
-      addAdvisorTooltipLine(lines, NS.MSG_VAULT_PICK_ONE, 0.55, 0.6, 0.7)
       if isVaultWinner then
         addAdvisorTooltipLine(lines, NS.MSG_VAULT_LOADOUT_WINNER, 1, 0.88, 0.45)
       end
