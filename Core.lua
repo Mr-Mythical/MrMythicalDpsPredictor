@@ -611,7 +611,6 @@ NS.MSG_EQUIP_COMBAT = "Can't equip in combat."
 NS.MSG_EQUIP_STATUS_DONE = "Equipped %s."
 NS.MSG_EQUIP_STATUS_PENDING = "Equipping %s…"
 NS.MSG_EQUIP_STATUS_FAILED = "Couldn't equip %s."
-NS.ADVISOR_SUBTITLE = ""
 
 function NS.getDpsDeltaColor(delta)
   local d = tonumber(delta) or 0
