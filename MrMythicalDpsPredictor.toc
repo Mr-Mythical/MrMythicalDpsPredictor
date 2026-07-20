@@ -6,6 +6,7 @@
 ## IconTexture: Logo.tga
 ## SavedVariables: MR_MYTHICAL_DPS_CONFIG
 ## X-Curse-Project-ID: 1592016
+## X-Wago-ID: kGryrXKy
 
 ModelData.lua
 ValidationData.lua
