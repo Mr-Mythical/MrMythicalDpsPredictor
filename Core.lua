@@ -143,7 +143,6 @@ end
 if MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades == nil then
   MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades = false
 end
-
 local function migrateBagSelectionToAdvisor()
   local legacy = MR_MYTHICAL_DPS_CONFIG.bag_item_selection
   local advisor = MR_MYTHICAL_DPS_CONFIG.gear_advisor_item_selection

@@ -298,7 +298,12 @@ local function tryAddInstanceLootRef(refs, seen, journalLink, info, journalInsta
     end
   end
 
-  if isLootLinkUsableForPlayer and isLootLinkUsableForPlayer(checkLink, specKey) then
+  local allowRef = true
+  if isLootLinkUsableForPlayer and not isLootLinkUsableForPlayer(checkLink, specKey) then
+    allowRef = false
+  end
+
+  if allowRef then
     local sourceLabel = instanceName or ("Instance " .. tostring(journalInstanceId))
     if tokenLink then
       sourceLabel = sourceLabel .. " (tier token)"
@@ -2978,8 +2983,8 @@ function NS.collectEncounterJournalLootRefs(instanceId, expectedName, specKey, s
   return refs, nil, aggregateMeta
 end
 
-function NS.collectLootRefsForInstance(instanceId, globalSeen, expectedName, specKey, instanceKind, previewPreset)
-  return collectLootRefsForInstance(instanceId, globalSeen, expectedName, specKey, instanceKind, previewPreset)
+function NS.collectLootRefsForInstance(instanceId, globalSeen, expectedName, specKey, instanceKind, previewPreset, collectOpts)
+  return collectLootRefsForInstance(instanceId, globalSeen, expectedName, specKey, instanceKind, previewPreset, collectOpts)
 end
 
 local UPGRADE_SLOT_IDS = { 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17 }
