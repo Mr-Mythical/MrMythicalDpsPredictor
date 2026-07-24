@@ -126,6 +126,8 @@ do
     return false
   end
 
+  -- Resize backdrop after late AddLine without GameTooltip:Show().
+  -- Show() re-runs TooltipDataProcessor, clears custom lines, and can hide the tip.
   local function refreshTooltipLayout(tooltip)
     if not tooltip or not tooltip.IsShown or not tooltip:IsShown() then
       return
@@ -134,7 +136,15 @@ do
       return
     end
     tooltip.mrMythicalRefreshingLayout = true
-    tooltip:Show()
+    if tooltip.SetPadding then
+      local right, bottom, left, top = 0, 0, 0, 0
+      if tooltip.GetPadding then
+        right, bottom, left, top = tooltip:GetPadding()
+      end
+      tooltip:SetPadding(right, bottom, left, top)
+    elseif GameTooltip_CalculatePadding then
+      GameTooltip_CalculatePadding(tooltip)
+    end
     tooltip.mrMythicalRefreshingLayout = nil
   end
 
@@ -292,9 +302,8 @@ do
 
     local cacheKey = tooltipCacheKey(itemLink, specKeys)
     local blockKey = cacheKey .. "|" .. extraLinesBlockSuffix(extraLines)
-    if tooltip.mrMythicalBlockKey == blockKey then
-      return
-    end
+    -- Only trust visible header text, not mrMythicalBlockKey: a layout refresh can
+    -- wipe lines without OnHide, leaving a stale key that would skip re-append.
     local predictionLines = nil
     local lookupStart
     if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug and debugprofilestop then

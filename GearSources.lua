@@ -1020,6 +1020,19 @@ local function itemHasUsablePrimaryStat(link)
 end
 
 local function isWeaponUsableForPlayer(classToken, specKey, itemClassID, itemSubClassID, equipLoc)
+  if equipLoc == "INVTYPE_2HWEAPON" then
+    local loadout = NS.getWeaponLoadoutForSpec and NS.getWeaponLoadoutForSpec(specKey)
+    if loadout and loadout.two_handed ~= true then
+      return false
+    end
+    return NS.isItemAllowedForMainHand(classToken, itemClassID, itemSubClassID, equipLoc)
+  end
+  if equipLoc == "INVTYPE_RANGED" or equipLoc == "INVTYPE_RANGEDRIGHT" then
+    return NS.isItemAllowedForMainHand(classToken, itemClassID, itemSubClassID, equipLoc)
+  end
+  if NS.rejectsOneHandedWeapons and NS.rejectsOneHandedWeapons(specKey) then
+    return false
+  end
   if NS.isItemAllowedForMainHand(classToken, itemClassID, itemSubClassID, equipLoc) then
     return true
   end

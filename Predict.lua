@@ -80,7 +80,7 @@ local CLASS_WEAPON_RULES = {
       [WEAPON_SUBCLASS.STAFF] = true,
     },
     allow_shield = false,
-    allow_holdable = false,
+    allow_holdable = true,
   },
   EVOKER = {
     weapon_subclasses = {
@@ -127,7 +127,7 @@ local CLASS_WEAPON_RULES = {
       [WEAPON_SUBCLASS.FIST] = true,
     },
     allow_shield = false,
-    allow_holdable = false,
+    allow_holdable = true,
   },
   PALADIN = {
     weapon_subclasses = {
@@ -200,12 +200,27 @@ local SPEC_OFFHAND_WEAPON_ALLOWED = {
   Death_Knight_Frost = true,
   Demon_Hunter_Havoc = true,
   Demon_Hunter_Vengeance = true,
+  Demon_Hunter_Devourer = true,
+  Hunter_Survival = true,
+  Hunter_Survival_PL_DW = true,
   Monk_Brewmaster = true,
   Monk_Windwalker = true,
   Rogue_Assassination = true,
   Rogue_Outlaw = true,
   Rogue_Subtlety = true,
   Shaman_Enhancement = true,
+  -- Warrior_Fury uses Titan's Grip (dual 2H), not 1H off-hand weapons.
+}
+
+local SPEC_SHIELD_ALLOWED = {
+  Paladin_Holy = true,
+  Paladin_Protection = true,
+  Shaman_Elemental = true,
+  Shaman_Restoration = true,
+  Warrior_Protection = true,
+}
+
+local SPEC_TWO_HANDED_OFFHAND = {
   Warrior_Fury = true,
 }
 
@@ -239,6 +254,22 @@ local function isSpecAllowedWeaponOffhand(specKey)
   return SPEC_OFFHAND_WEAPON_ALLOWED[classPart .. "_" .. specPart] == true
 end
 
+local function isTitansGripSpec(specKey)
+  local classPart, specPart = NS.getClassSpecPair(specKey)
+  if not classPart or not specPart then
+    return false
+  end
+  return SPEC_TWO_HANDED_OFFHAND[classPart .. "_" .. specPart] == true
+end
+
+local function isSpecAllowedShield(specKey)
+  local classPart, specPart = NS.getClassSpecPair(specKey)
+  if not classPart or not specPart then
+    return false
+  end
+  return SPEC_SHIELD_ALLOWED[classPart .. "_" .. specPart] == true
+end
+
 local function isOffhandTypeAllowedForClass(classToken, equipLoc)
   local rules = CLASS_WEAPON_RULES[classToken]
   if not rules then
@@ -270,13 +301,20 @@ local function isItemAllowedForOffHand(classToken, specKey, itemClassID, itemSub
   if not classToken then
     return false
   end
-  if equipLoc == "INVTYPE_SHIELD" or equipLoc == "INVTYPE_HOLDABLE" then
+  if equipLoc == "INVTYPE_SHIELD" then
+    return isSpecAllowedShield(specKey) and isOffhandTypeAllowedForClass(classToken, equipLoc)
+  end
+  if equipLoc == "INVTYPE_HOLDABLE" then
     return isOffhandTypeAllowedForClass(classToken, equipLoc)
   end
   if itemClassID ~= 2 then -- Weapon
     return false
   end
   if not isWeaponSubclassAllowedForClass(classToken, itemSubClassID) then
+    return false
+  end
+  -- Fury rejects 1H entirely (Titan's Grip is dual 2H only).
+  if isTitansGripSpec(specKey) then
     return false
   end
   return isSpecAllowedWeaponOffhand(specKey)
@@ -621,7 +659,7 @@ end
 
 -- Weapon loadout profiles:
 -- two_handed = spec can use a 2H loadout
--- dual_wield = spec can use a 2x1H loadout (including off-hand/shield/holdable in slot 17)
+-- dual_wield = spec can use slot 17 (1H weapon / shield / holdable / Titan's Grip 2H)
 local SPEC_WEAPON_LOADOUTS = {
   Death_Knight_Blood = { two_handed = true, dual_wield = false },
   Death_Knight_Frost = { two_handed = true, dual_wield = true },
@@ -629,27 +667,36 @@ local SPEC_WEAPON_LOADOUTS = {
 
   Demon_Hunter_Havoc = { two_handed = false, dual_wield = true },
   Demon_Hunter_Vengeance = { two_handed = false, dual_wield = true },
+  Demon_Hunter_Devourer = { two_handed = false, dual_wield = true },
 
   Druid_Balance = { two_handed = true, dual_wield = true },
   Druid_Feral = { two_handed = true, dual_wield = false },
   Druid_Guardian = { two_handed = true, dual_wield = false },
+  Druid_Restoration = { two_handed = true, dual_wield = true },
 
   Evoker_Devastation = { two_handed = true, dual_wield = true },
+  Evoker_Preservation = { two_handed = true, dual_wield = true },
+  Evoker_Augmentation = { two_handed = true, dual_wield = true },
 
   Hunter_Beast_Mastery = { two_handed = true, dual_wield = false },
   Hunter_Marksmanship = { two_handed = true, dual_wield = false },
-  Hunter_Survival = { two_handed = true, dual_wield = false },
+  Hunter_Survival = { two_handed = true, dual_wield = true },
+  Hunter_Survival_PL_DW = { two_handed = true, dual_wield = true },
 
   Mage_Arcane = { two_handed = true, dual_wield = true },
   Mage_Fire = { two_handed = true, dual_wield = true },
   Mage_Frost = { two_handed = true, dual_wield = true },
 
   Monk_Brewmaster = { two_handed = true, dual_wield = true },
+  Monk_Mistweaver = { two_handed = true, dual_wield = true },
   Monk_Windwalker = { two_handed = true, dual_wield = true },
 
+  Paladin_Holy = { two_handed = false, dual_wield = true },
   Paladin_Protection = { two_handed = false, dual_wield = true },
   Paladin_Retribution = { two_handed = true, dual_wield = false },
 
+  Priest_Discipline = { two_handed = true, dual_wield = true },
+  Priest_Holy = { two_handed = true, dual_wield = true },
   Priest_Shadow = { two_handed = true, dual_wield = true },
 
   Rogue_Assassination = { two_handed = false, dual_wield = true },
@@ -658,6 +705,7 @@ local SPEC_WEAPON_LOADOUTS = {
 
   Shaman_Elemental = { two_handed = true, dual_wield = true },
   Shaman_Enhancement = { two_handed = false, dual_wield = true },
+  Shaman_Restoration = { two_handed = true, dual_wield = true },
 
   Warlock_Affliction = { two_handed = true, dual_wield = true },
   Warlock_Demonology = { two_handed = true, dual_wield = true },
@@ -676,6 +724,34 @@ local function getWeaponLoadoutForSpec(specKey)
 
   local key = classPart .. "_" .. specPart
   return SPEC_WEAPON_LOADOUTS[key] or { two_handed = true, dual_wield = true }
+end
+
+local function rejectsOneHandedWeapons(specKey)
+  if isTitansGripSpec(specKey) then
+    return true
+  end
+  local loadout = getWeaponLoadoutForSpec(specKey)
+  return loadout.two_handed == true and loadout.dual_wield ~= true
+end
+
+local function isRangedEquipLoc(equipLoc)
+  return equipLoc == "INVTYPE_RANGED" or equipLoc == "INVTYPE_RANGEDRIGHT"
+end
+
+local function isMainHandEquipLocAllowed(equipLoc, specKey)
+  if not equipLoc then
+    return false
+  end
+  if isRangedEquipLoc(equipLoc) then
+    return true
+  end
+  if equipLoc == "INVTYPE_2HWEAPON" then
+    return getWeaponLoadoutForSpec(specKey).two_handed == true
+  end
+  if rejectsOneHandedWeapons(specKey) then
+    return false
+  end
+  return true
 end
 
 local function isWeaponEquipLoc(equipLoc)
@@ -782,6 +858,10 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
     end
 
     -- Candidate is 1H mainhand-compatible: evaluate dual-wield scenarios when supported.
+    if rejectsOneHandedWeapons(specKey) then
+      return nil, "1H weapons are not used by this spec"
+    end
+
     if loadout.dual_wield then
       -- Scenario 1: mainhand replacement (only when currently dual-wielding).
       if mainHandRef and not currentIs2H then
@@ -829,21 +909,6 @@ local function evaluateWeaponItem(itemRef, itemLink, specKey, base, basePred, ca
         else
           lastErr = err or lastErr
         end
-      end
-    elseif loadout.two_handed then
-      -- 2H-only specs can still compare 1H items directly against mainhand,
-      -- but no dual/offhand scenarios are evaluated.
-      if mainHandRef then
-        local mhStats, err = NS.computeStatDelta(itemRef, mainHandRef)
-        if mhStats then
-          local newStats = statsWithDelta(base, mhStats, context)
-          local pred1, delta1 = predictDelta(base, newStats, specKey, basePred)
-          table.insert(results, { dps_base = basePred, dps_new = pred1, dps_delta = delta1, slot_id = 16, mode = "mh_replacement" })
-        else
-          lastErr = err or lastErr
-        end
-      else
-        return nil, "native comparison unavailable for weapon"
       end
     end
 
@@ -1058,7 +1123,8 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey, context
     if not cand or not cand.key or mhSeen[cand.key] then
       return
     end
-    if cand.link and is2HWeapon(cand.link) then
+    -- Titan's Grip needs 2H MH options when scoring an OH 2H.
+    if cand.link and is2HWeapon(cand.link) and not isTitansGripSpec(specKey) then
       return
     end
     mhSeen[cand.key] = true
@@ -1088,7 +1154,18 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey, context
       if not loadout.two_handed then
         return
       end
-      bestDelta = weaponLoadoutDpsDelta(cand, nil, eqMh, eqOh, specKey, baseStats, basePred, context)
+      if isTitansGripSpec(specKey) and loadout.dual_wield then
+        bestDelta = bestMainHandPairDelta(
+          cand, ohOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
+        )
+        -- Also consider 2H alone (empty OH).
+        local alone = weaponLoadoutDpsDelta(cand, nil, eqMh, eqOh, specKey, baseStats, basePred, context)
+        if alone ~= nil and (bestDelta == nil or alone > bestDelta) then
+          bestDelta = alone
+        end
+      else
+        bestDelta = weaponLoadoutDpsDelta(cand, nil, eqMh, eqOh, specKey, baseStats, basePred, context)
+      end
     elseif slotId == 16 then
       if not loadout.dual_wield then
         return
@@ -1130,5 +1207,8 @@ NS.getWeaponLoadoutForSpec = getWeaponLoadoutForSpec
 NS.isItemAllowedForMainHand = isItemAllowedForMainHand
 NS.isItemAllowedForOffHand = isItemAllowedForOffHand
 NS.isArmorCandidateAllowedForClass = isArmorCandidateAllowedForClass
+NS.isTitansGripSpec = isTitansGripSpec
+NS.rejectsOneHandedWeapons = rejectsOneHandedWeapons
+NS.isMainHandEquipLocAllowed = isMainHandEquipLocAllowed
 NS.createPredictionContext = createPredictionContext
 

@@ -1235,15 +1235,24 @@ slotCanUseCandidate = function(slotId, cand, classToken, specKey, loadout)
   if not equipLoc then return false end
 
   if slotId == 16 then
+    if not NS.isMainHandEquipLocAllowed or not NS.isMainHandEquipLocAllowed(equipLoc, specKey) then
+      return false
+    end
     if equipLoc == "INVTYPE_2HWEAPON" then
       return loadout.two_handed == true
+        and NS.isItemAllowedForMainHand(classToken, itemClassID, itemSubClassID, equipLoc)
     end
     return NS.isItemAllowedForMainHand(classToken, itemClassID, itemSubClassID, equipLoc)
   end
 
   if slotId == 17 then
-    if equipLoc == "INVTYPE_2HWEAPON" then
+    if not loadout.dual_wield then
       return false
+    end
+    if equipLoc == "INVTYPE_2HWEAPON" then
+      return NS.isTitansGripSpec
+        and NS.isTitansGripSpec(specKey)
+        and NS.isItemAllowedForMainHand(classToken, itemClassID, itemSubClassID, equipLoc)
     end
     return NS.isItemAllowedForOffHand(classToken, specKey, itemClassID, itemSubClassID, equipLoc)
   end
@@ -1276,14 +1285,28 @@ function NS.isValidWeaponCombo(mhCand, ohCand, classToken, specKey, loadout, req
   end
 
   local mhIs2H = NS.is2HWeapon(mhCand.link)
+  local ohIs2H = ohCand and ohCand.link and NS.is2HWeapon(ohCand.link)
   if mhIs2H then
     if not loadout.two_handed then
       return false
+    end
+    if ohIs2H then
+      if not loadout.dual_wield then
+        return false
+      end
+      if not (NS.isTitansGripSpec and NS.isTitansGripSpec(specKey)) then
+        return false
+      end
+      local ohClassID, ohSubClassID, ohEquipLoc = NS.getItemTypeInfo(ohCand.link)
+      return NS.isItemAllowedForMainHand(classToken, ohClassID, ohSubClassID, ohEquipLoc)
     end
     return (not ohCand) or (not ohCand.link)
   end
 
   local mhClassID, mhSubClassID, mhEquipLoc = NS.getItemTypeInfo(mhCand.link)
+  if not NS.isMainHandEquipLocAllowed or not NS.isMainHandEquipLocAllowed(mhEquipLoc, specKey) then
+    return false
+  end
   if not NS.isItemAllowedForMainHand(classToken, mhClassID, mhSubClassID, mhEquipLoc) then
     return false
   end

@@ -18,7 +18,7 @@ function NS.getClassSpecPair(specKey)
   if type(specKey) ~= "string" then
     return nil, nil
   end
-  local short = specKey:gsub("^MID1_", "")
+  local short = specKey:gsub("^MID%d+_", "")
   local parts = {}
   for token in short:gmatch("[^_]+") do
     table.insert(parts, token)
@@ -28,14 +28,29 @@ function NS.getClassSpecPair(specKey)
   end
 
   local classPart = parts[1]
-  local specPart = parts[2]
+  local specStart = 2
   if classPart == "Death" and parts[2] == "Knight" and parts[3] then
     classPart = "Death_Knight"
-    specPart = parts[3]
+    specStart = 3
   elseif classPart == "Demon" and parts[2] == "Hunter" and parts[3] then
     classPart = "Demon_Hunter"
-    specPart = parts[3]
+    specStart = 3
   end
+
+  if not parts[specStart] then
+    return nil, nil
+  end
+
+  -- Multi-token base specs (must not collapse Beast_Mastery → Beast).
+  local specPart = parts[specStart]
+  if parts[specStart] == "Beast" and parts[specStart + 1] == "Mastery" then
+    specPart = "Beast_Mastery"
+  elseif parts[specStart] == "Survival"
+    and parts[specStart + 1] == "PL"
+    and parts[specStart + 2] == "DW" then
+    specPart = "Survival_PL_DW"
+  end
+
   return classPart, specPart
 end
 
