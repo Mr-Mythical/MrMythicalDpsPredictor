@@ -3,10 +3,10 @@ local ADDON_NAME, NS = ...
 local litePanel = nil
 local liteRows = {}
 local litePlan = nil
-local liteSummary = nil
 local liteScanScheduleToken = 0
 local liteScanWorkToken = 0
 local liteScanInProgress = false
+local liteScanHandle = nil
 local liteActiveInvSlot = nil
 
 local LITE_WIDTH = 340
@@ -114,9 +114,6 @@ local function renderLitePlan()
   end
 
   setLiteStatus(nil)
-  if litePanel.summaryText then
-    litePanel.summaryText:SetText(liteSummary or "")
-  end
   if litePanel.balanceText then
     litePanel.balanceText:SetText(NS.formatCrestBalancesLine and NS.formatCrestBalancesLine() or "")
   end
@@ -189,7 +186,7 @@ local function ensureLitePanel()
   end
 
   local f = CreateFrame("Frame", "MrMythicalCrestUpgradeLite", UIParent, "BackdropTemplate")
-  f:SetSize(LITE_WIDTH, 120 + LITE_SCROLL_H)
+  f:SetSize(LITE_WIDTH, 112 + LITE_SCROLL_H)
   f:SetFrameStrata("FULLSCREEN_DIALOG")
   f:SetBackdrop({
     bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -201,45 +198,44 @@ local function ensureLitePanel()
   f:SetBackdropBorderColor(0.28, 0.55, 0.38, 0.95)
   f:Hide()
 
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -10)
-  title:SetText(NS.MSG_CREST_LITE_TITLE)
-  title:SetTextColor(0.55, 1, 0.65)
-
-  local brand = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  brand:SetPoint("TOPRIGHT", f, "TOPRIGHT", -34, -12)
-  brand:SetText(NS.BRAND)
-  brand:SetTextColor(0.45, 0.5, 0.52)
-
   local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
   closeBtn:SetScript("OnClick", function()
     f:Hide()
   end)
 
+  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -10)
+  title:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
+  title:SetJustifyH("LEFT")
+  title:SetText(NS.MSG_CREST_LITE_TITLE)
+  title:SetTextColor(0.55, 1, 0.65)
+
+  local brand = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  brand:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -1)
+  brand:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  brand:SetJustifyH("LEFT")
+  brand:SetText("Mr. Mythical")
+  brand:SetTextColor(0.45, 0.5, 0.52)
+
   local balanceText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  balanceText:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -28)
+  balanceText:SetPoint("TOPLEFT", brand, "BOTTOMLEFT", 0, -6)
   balanceText:SetPoint("RIGHT", f, "RIGHT", -12, 0)
   balanceText:SetJustifyH("LEFT")
+  balanceText:SetWordWrap(true)
+  balanceText:SetNonSpaceWrap(true)
   balanceText:SetTextColor(0.58, 0.64, 0.6)
   f.balanceText = balanceText
 
-  local summaryText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  summaryText:SetPoint("TOPLEFT", balanceText, "BOTTOMLEFT", 0, -2)
-  summaryText:SetPoint("RIGHT", f, "RIGHT", -12, 0)
-  summaryText:SetJustifyH("LEFT")
-  summaryText:SetTextColor(0.72, 0.88, 0.76)
-  f.summaryText = summaryText
-
   local statusText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  statusText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, -8)
+  statusText:SetPoint("TOPLEFT", balanceText, "BOTTOMLEFT", 0, -10)
   statusText:SetPoint("RIGHT", f, "RIGHT", -12, 0)
   statusText:SetJustifyH("LEFT")
   statusText:SetWordWrap(true)
   f.statusText = statusText
 
   local scrollFrame = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-  scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -78)
+  scrollFrame:SetPoint("TOPLEFT", balanceText, "BOTTOMLEFT", -4, -10)
   scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -28, 36)
   f.scrollFrame = scrollFrame
 
@@ -249,7 +245,7 @@ local function ensureLitePanel()
   f.itemList = itemList
 
   local advisorBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  advisorBtn:SetSize(108, 22)
+  advisorBtn:SetSize(140, 22)
   advisorBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 10, 8)
   advisorBtn:SetText(NS.MSG_CREST_LITE_OPEN_ADVISOR)
   advisorBtn:SetScript("OnClick", function()
@@ -263,29 +259,39 @@ local function ensureLitePanel()
   return f
 end
 
+local function cancelLiteScanHandle()
+  if liteScanHandle then
+    if NS.cancelCrestSpendPlanScan then
+      NS.cancelCrestSpendPlanScan(liteScanHandle)
+    else
+      liteScanHandle.cancelled = true
+    end
+    liteScanHandle = nil
+  end
+end
+
 local function invalidateLiteScan()
   liteScanScheduleToken = liteScanScheduleToken + 1
   liteScanWorkToken = liteScanWorkToken + 1
   liteScanInProgress = false
+  cancelLiteScanHandle()
 end
 
 local function tryUseCachedPlan()
   if not NS.getCachedCrestSpendPlanData then
     return false
   end
-  local plan, summary = NS.getCachedCrestSpendPlanData()
+  local plan = NS.getCachedCrestSpendPlanData()
   if not plan or #plan == 0 then
     return false
   end
   litePlan = plan
-  liteSummary = summary
   renderLitePlan()
   return true
 end
 
 local function finishLiteScanEmpty(note, panel)
   litePlan = {}
-  liteSummary = nil
   local msg = NS.MSG_CREST_EMPTY_AFFORDABLE
   if note then
     msg = msg .. " (" .. note .. ")"
@@ -301,74 +307,62 @@ local function runLiteScanWork(workToken, panel, specKey)
     liteScanInProgress = false
     return
   end
-
-  local rows, note
-  local ok, err = pcall(function()
-    rows, note = NS.collectCrestUpgradeOpportunities(specKey)
-  end)
-  if not ok then
-    liteScanInProgress = false
-    setLiteStatus("Crest scan failed: " .. tostring(err), 1, 0.4, 0.4)
-    return
-  end
-  if workToken ~= liteScanWorkToken or not panel:IsShown() then
-    liteScanInProgress = false
-    return
-  end
-
-  C_Timer.After(0, function()
-    if workToken ~= liteScanWorkToken or not panel:IsShown() or not isItemUpgradeFrameOpen() then
-      liteScanInProgress = false
-      return
-    end
-
-    NS.refreshCrestRowAffordability(rows)
-    local affordable = {}
-    for _, row in ipairs(rows or {}) do
-      if row.can_afford then
-        table.insert(affordable, row)
-      end
-    end
-
-    if #affordable == 0 then
-      liteScanInProgress = false
-      finishLiteScanEmpty(note, panel)
-      return
-    end
-
-    setLiteStatus("Building spending plan...", 0.95, 0.85, 0.45)
-
-    C_Timer.After(0, function()
-      if workToken ~= liteScanWorkToken or not panel:IsShown() or not isItemUpgradeFrameOpen() then
-        liteScanInProgress = false
-        return
-      end
-
-      local plan, spent, totalDps
-      local planOk, planErr = pcall(function()
-        plan, spent, totalDps = NS.optimizeCrestSpendPlan(rows, specKey)
-      end)
-      liteScanInProgress = false
-
-      if not planOk then
-        setLiteStatus("Plan optimization failed: " .. tostring(planErr), 1, 0.4, 0.4)
-        return
-      end
+  cancelLiteScanHandle()
+  liteScanHandle = NS.startCrestSpendPlanScan(specKey, {
+    onProgress = function(phase)
       if workToken ~= liteScanWorkToken or not panel:IsShown() then
+        return
+      end
+      if phase == "optimize" or phase == "chains" then
+        setLiteStatus("Building spending plan...", 0.95, 0.85, 0.45)
+      else
+        setLiteStatus(NS.MSG_CREST_SCANNING, 0.95, 0.85, 0.45)
+      end
+    end,
+    onComplete = function(plan, spent, totalDps, rows, note)
+      if workToken ~= liteScanWorkToken then
+        return
+      end
+      liteScanInProgress = false
+      liteScanHandle = nil
+      if not panel:IsShown() or not isItemUpgradeFrameOpen() then
+        return
+      end
+
+      NS.refreshCrestRowAffordability(rows)
+      local hasAffordable = false
+      for _, row in ipairs(rows or {}) do
+        if row.can_afford then
+          hasAffordable = true
+          break
+        end
+      end
+      if not hasAffordable or not plan or #plan == 0 then
+        finishLiteScanEmpty(note, panel)
         return
       end
 
       litePlan = plan or {}
-      liteSummary = NS.formatCrestSpendPlanSummary(litePlan, spent, totalDps)
       renderLitePlan()
-    end)
-  end)
+    end,
+    onError = function(err)
+      if workToken ~= liteScanWorkToken then
+        return
+      end
+      liteScanInProgress = false
+      liteScanHandle = nil
+      if panel:IsShown() then
+        setLiteStatus("Crest scan failed: " .. tostring(err), 1, 0.4, 0.4)
+      end
+    end,
+  })
 end
 
 local function scheduleLiteScan(delay)
-  delay = delay or 0.15
+  delay = delay or 0.2
   liteScanScheduleToken = liteScanScheduleToken + 1
   local scheduleToken = liteScanScheduleToken
+  cancelLiteScanHandle()
 
   local panel = ensureLitePanel()
   panel:Show()
@@ -380,7 +374,6 @@ local function scheduleLiteScan(delay)
   local specKey = NS.getActiveProfileKey()
   if not specKey then
     litePlan = nil
-    liteSummary = nil
     setLiteStatus(NS.MSG_NO_PROFILE_ACTION, 1, 0.5, 0.5)
     return
   end
@@ -390,7 +383,6 @@ local function scheduleLiteScan(delay)
   end
 
   litePlan = nil
-  liteSummary = nil
   clearLiteRows()
   setLiteStatus(NS.MSG_CREST_SCANNING, 0.95, 0.85, 0.45)
 
@@ -405,21 +397,17 @@ local function scheduleLiteScan(delay)
     liteScanWorkToken = liteScanWorkToken + 1
     local workToken = liteScanWorkToken
     liteScanInProgress = true
-
-    C_Timer.After(0, function()
-      runLiteScanWork(workToken, panel, specKey)
-    end)
+    runLiteScanWork(workToken, panel, specKey)
   end)
 end
 
 local function onUpgradeFrameShow()
-  scheduleLiteScan(0.05)
+  scheduleLiteScan(0.2)
 end
 
 local function onUpgradeFrameHide()
   invalidateLiteScan()
   litePlan = nil
-  liteSummary = nil
   liteActiveInvSlot = nil
   if litePanel then
     litePanel:Hide()

@@ -21,6 +21,7 @@ LoadoutEngine.lua
 CrestUpgradeData.lua
 TierTokenData.lua
 GearSources.lua
+CrestSpendPlanScan.lua
 ScanProgress.lua
 GearAdvisor.lua
 VaultAdvisor.lua

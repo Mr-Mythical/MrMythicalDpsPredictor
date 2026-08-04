@@ -450,6 +450,14 @@ local function cancelAdvisorScan()
     if advisorScanRunner.lootRunner then
       advisorScanRunner.lootRunner.cancelled = true
     end
+    if advisorScanRunner.crestScanHandle then
+      if NS.cancelCrestSpendPlanScan then
+        NS.cancelCrestSpendPlanScan(advisorScanRunner.crestScanHandle)
+      else
+        advisorScanRunner.crestScanHandle.cancelled = true
+      end
+      advisorScanRunner.crestScanHandle = nil
+    end
     advisorScanRunner.cancelled = true
   end
 end
@@ -2402,17 +2410,72 @@ local function startRankScan(runner, refs)
   NS.scheduleScanPump(0, pumpScore)
 end
 
-local function runCrestSpendOptimization()
+local function runCrestSpendOptimization(runner, onDone)
   local specKey = NS.getActiveProfileKey()
-  local plan, spent, totalDps = NS.optimizeCrestSpendPlan(crestAllRows, specKey)
-  crestSpendPlan = plan
-  crestPlanSummary = NS.formatCrestSpendPlanSummary(plan, spent, totalDps)
-  return plan, spent, totalDps
+  if not NS.startCrestSpendPlanScan then
+    local plan, spent, totalDps = NS.optimizeCrestSpendPlan(crestAllRows, specKey)
+    crestSpendPlan = plan
+    crestPlanSummary = NS.formatCrestSpendPlanSummary(plan, spent, totalDps)
+    if onDone then
+      onDone(true)
+    end
+    return
+  end
+
+  if runner then
+    if runner.crestScanHandle then
+      NS.cancelCrestSpendPlanScan(runner.crestScanHandle)
+      runner.crestScanHandle = nil
+    end
+    runner.crestScanHandle = NS.startCrestSpendPlanScan(specKey, {
+      rows = crestAllRows,
+      onProgress = function(phase)
+        if not advisorScanRunner or advisorScanRunner ~= runner or runner.cancelled then
+          return
+        end
+        if phase == "optimize" or phase == "chains" then
+          setStatusText("Building crest spending plan…", { 0.95, 0.85, 0.45 })
+        end
+      end,
+      onComplete = function(plan, spent, totalDps, rows)
+        if not advisorScanRunner or advisorScanRunner ~= runner or runner.cancelled then
+          return
+        end
+        runner.crestScanHandle = nil
+        crestAllRows = rows or crestAllRows
+        crestSpendPlan = plan
+        crestPlanSummary = NS.formatCrestSpendPlanSummary(plan, spent, totalDps)
+        if onDone then
+          onDone(true)
+        end
+      end,
+      onError = function(err)
+        if not advisorScanRunner or advisorScanRunner ~= runner or runner.cancelled then
+          return
+        end
+        runner.crestScanHandle = nil
+        setStatusText("Crest plan failed: " .. tostring(err), { 1, 0.4, 0.4 })
+        if onDone then
+          onDone(false)
+        end
+      end,
+    })
+  else
+    local plan, spent, totalDps = NS.optimizeCrestSpendPlan(crestAllRows, specKey)
+    crestSpendPlan = plan
+    crestPlanSummary = NS.formatCrestSpendPlanSummary(plan, spent, totalDps)
+    if onDone then
+      onDone(true)
+    end
+  end
 end
 
-local function applyCrestSpendPlanView(opts)
+local function applyCrestSpendPlanView(opts, runner, onDone)
   opts = opts or {}
   if #crestAllRows == 0 then
+    if onDone then
+      onDone(false)
+    end
     return false
   end
   for _, row in ipairs(crestAllRows) do
@@ -2420,17 +2483,30 @@ local function applyCrestSpendPlanView(opts)
     row.crest_plan_steps = 0
   end
   NS.refreshCrestRowAffordability(crestAllRows)
-  runCrestSpendOptimization()
-  applyCrestRowFilter()
-  refreshCrestChrome()
-  renderAdvisorRows()
-  if crestPlanSummary then
-    setStatusText(crestPlanSummary, { 0.55, 1, 0.65 })
-    if opts.flash and crestSpendPlan and #crestSpendPlan > 0 and UIFrameFlash and advisorFrame and advisorFrame.summaryText then
-      UIFrameFlash(advisorFrame.summaryText, 0.2, 0.6, 2, false, 0, 0)
+
+  local function finishApply(ok)
+    if not ok then
+      if onDone then
+        onDone(false)
+      end
+      return
+    end
+    applyCrestRowFilter()
+    refreshCrestChrome()
+    renderAdvisorRows()
+    if crestPlanSummary then
+      setStatusText(crestPlanSummary, { 0.55, 1, 0.65 })
+      if opts.flash and crestSpendPlan and #crestSpendPlan > 0 and UIFrameFlash and advisorFrame and advisorFrame.summaryText then
+        UIFrameFlash(advisorFrame.summaryText, 0.2, 0.6, 2, false, 0, 0)
+      end
+    end
+    if onDone then
+      onDone(crestSpendPlan ~= nil and #crestSpendPlan > 0)
     end
   end
-  return crestSpendPlan ~= nil and #crestSpendPlan > 0
+
+  runCrestSpendOptimization(runner, finishApply)
+  return true
 end
 
 runCrestScan = function()
@@ -2454,51 +2530,109 @@ runCrestScan = function()
   startScanProgressTiming()
   syncActionButtons()
 
-  C_Timer.After(0, function()
-    if not advisorScanRunner or advisorScanRunner.cancelled or advisorScanRunner ~= runner then
-      return
-    end
-    local rows, note = NS.collectCrestUpgradeOpportunities(specKey)
-    if not advisorScanRunner or advisorScanRunner.cancelled or advisorScanRunner ~= runner then
-      return
-    end
-
-    crestAllRows = rows or {}
-    for _, row in ipairs(crestAllRows) do
-      row.crest_plan_order = nil
-      row.crest_plan_steps = 0
-    end
-    applyCrestRowFilter()
-    refreshCrestChrome()
-
-    local upgradeCount = 0
-    local affordableCount = 0
-    for _, row in ipairs(crestAllRows) do
-      if row.is_upgrade then upgradeCount = upgradeCount + 1 end
-      if row.can_afford then affordableCount = affordableCount + 1 end
-    end
-
-    local statusMsg = string.format(
-      "Crests: %s options, %s affordable, %s upgrades%s",
-      formatComboCount(#crestAllRows), formatComboCount(affordableCount), formatComboCount(upgradeCount),
-      note and (", " .. note) or ""
-    )
-    advisorScanRunner = nil
-    syncActionButtons()
-    saveModeScanSnapshot(currentMode)
-    if #crestRows > 0 then
-      applyCrestSpendPlanView()
-      if crestPlanSummary then
-        onAdvisorScanEnded(false, crestPlanSummary, { 0.55, 1, 0.65 })
+  if not NS.startCrestSpendPlanScan then
+    C_Timer.After(0, function()
+      if not advisorScanRunner or advisorScanRunner.cancelled or advisorScanRunner ~= runner then
+        return
+      end
+      local rows, note = NS.collectCrestUpgradeOpportunities(specKey)
+      if not advisorScanRunner or advisorScanRunner.cancelled or advisorScanRunner ~= runner then
+        return
+      end
+      crestAllRows = rows or {}
+      for _, row in ipairs(crestAllRows) do
+        row.crest_plan_order = nil
+        row.crest_plan_steps = 0
+      end
+      applyCrestRowFilter()
+      refreshCrestChrome()
+      local upgradeCount = 0
+      local affordableCount = 0
+      for _, row in ipairs(crestAllRows) do
+        if row.is_upgrade then upgradeCount = upgradeCount + 1 end
+        if row.can_afford then affordableCount = affordableCount + 1 end
+      end
+      local statusMsg = string.format(
+        "Crests: %s options, %s affordable, %s upgrades%s",
+        formatComboCount(#crestAllRows), formatComboCount(affordableCount), formatComboCount(upgradeCount),
+        note and (", " .. note) or ""
+      )
+      advisorScanRunner = nil
+      syncActionButtons()
+      saveModeScanSnapshot(currentMode)
+      if #crestRows > 0 then
+        applyCrestSpendPlanView()
+        if crestPlanSummary then
+          onAdvisorScanEnded(false, crestPlanSummary, { 0.55, 1, 0.65 })
+        else
+          onAdvisorScanEnded(false, statusMsg, { 0.55, 1, 0.65 })
+        end
       else
+        setStatusText(statusMsg, { 0.55, 1, 0.65 })
+        renderAdvisorRows()
         onAdvisorScanEnded(false, statusMsg, { 0.55, 1, 0.65 })
       end
-    else
-      setStatusText(statusMsg, { 0.55, 1, 0.65 })
+    end)
+    return
+  end
+
+  runner.crestScanHandle = NS.startCrestSpendPlanScan(specKey, {
+    onProgress = function(phase)
+      if not advisorScanRunner or advisorScanRunner ~= runner or runner.cancelled then
+        return
+      end
+      if phase == "optimize" or phase == "chains" then
+        setStatusText("Building crest spending plan…", { 0.95, 0.85, 0.45 })
+      else
+        setStatusText(NS.MSG_CREST_SCANNING, { 0.95, 0.85, 0.45 })
+      end
+    end,
+    onComplete = function(plan, spent, totalDps, rows, note)
+      if not advisorScanRunner or advisorScanRunner ~= runner or runner.cancelled then
+        return
+      end
+      runner.crestScanHandle = nil
+
+      crestAllRows = rows or {}
+      crestSpendPlan = plan
+      crestPlanSummary = NS.formatCrestSpendPlanSummary(plan, spent, totalDps)
+      applyCrestRowFilter()
+      refreshCrestChrome()
+
+      local upgradeCount = 0
+      local affordableCount = 0
+      for _, row in ipairs(crestAllRows) do
+        if row.is_upgrade then upgradeCount = upgradeCount + 1 end
+        if row.can_afford then affordableCount = affordableCount + 1 end
+      end
+
+      local statusMsg = string.format(
+        "Crests: %s options, %s affordable, %s upgrades%s",
+        formatComboCount(#crestAllRows), formatComboCount(affordableCount), formatComboCount(upgradeCount),
+        note and (", " .. note) or ""
+      )
+      advisorScanRunner = nil
+      syncActionButtons()
+      saveModeScanSnapshot(currentMode)
       renderAdvisorRows()
-      onAdvisorScanEnded(false, statusMsg, { 0.55, 1, 0.65 })
-    end
-  end)
+      if crestPlanSummary and crestSpendPlan and #crestSpendPlan > 0 then
+        setStatusText(crestPlanSummary, { 0.55, 1, 0.65 })
+        onAdvisorScanEnded(false, crestPlanSummary, { 0.55, 1, 0.65 })
+      else
+        setStatusText(statusMsg, { 0.55, 1, 0.65 })
+        onAdvisorScanEnded(false, statusMsg, { 0.55, 1, 0.65 })
+      end
+    end,
+    onError = function(err)
+      if not advisorScanRunner or advisorScanRunner ~= runner or runner.cancelled then
+        return
+      end
+      runner.crestScanHandle = nil
+      advisorScanRunner = nil
+      syncActionButtons()
+      onAdvisorScanEnded(false, "Crest scan failed: " .. tostring(err), { 1, 0.4, 0.4 })
+    end,
+  })
 end
 
 local function finishCandidateGather(runner, lootRefs, lootNote)

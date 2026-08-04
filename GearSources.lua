@@ -3673,6 +3673,9 @@ function NS.buildCrestUpgradeChains(rows, specKey)
             else
               dpsByLevel[level] = dpsByLevel[level - 1] or 0
             end
+            if NS._crestScanYield then
+              NS._crestScanYield("chains")
+            end
             local marginal = (dpsByLevel[level] or 0) - (dpsByLevel[level - 1] or 0)
             local rankLabel = string.format("%d/%d", level, maxLevel)
             if trackString and trackString ~= "" then
@@ -3836,6 +3839,9 @@ function NS.optimizeCrestSpendPlan(rows, specKey)
   end
 
   local function search(plan, spent, wm, bal, depth)
+    if NS._crestScanYield then
+      NS._crestScanYield("optimize")
+    end
     local totalDps = sumPlanDps(plan)
     local key = encodePlanSearchKey(levels, bal, wm)
     if memo[key] and memo[key] >= totalDps then
@@ -3928,6 +3934,42 @@ function NS.optimizeCrestSpendPlan(rows, specKey)
   return best.plan, sumCrestSpendFromPlan(best.plan), best.dps, chains
 end
 
+function NS.collectCrestUpgradeOpportunities(specKey)
+  local results = {}
+  if not NS.crestUpgradeDataReady or not NS.crestUpgradeDataReady() then
+    return results, "Crest upgrade data unavailable"
+  end
+  for _, slotId in ipairs(UPGRADE_SLOT_IDS) do
+    local slotName = NS.SLOT_ID_TO_NAME[slotId]
+    if slotName then
+      local invSlot = GetInventorySlotInfo(slotName)
+      if invSlot then
+        local link = getEquippedItemLink(invSlot)
+        if link then
+          primeItemInfo(link, tonumber(link:match("item:(%d+)")))
+          local row = analyzeEquippedCrestUpgrade(invSlot, link, slotId, specKey)
+          if row then
+            table.insert(results, row)
+          end
+          if NS._crestScanYield then
+            NS._crestScanYield("collect")
+          end
+        end
+      end
+    end
+  end
+
+  table.sort(results, function(a, b)
+    return (a.dps_per_crest or 0) > (b.dps_per_crest or 0)
+  end)
+
+  if #results == 0 then
+    return results, "No upgradeable equipped gear with crest costs found."
+  end
+  return results, nil
+end
+
+
 function NS.computeGreedyCrestSpendPlan(rows, specKey)
   local plan, spent, totalDps = NS.optimizeCrestSpendPlan(rows, specKey)
   return plan, spent, totalDps
@@ -3970,38 +4012,6 @@ function NS.formatCrestPlanStepLine(step)
     costLabel,
     NS.formatDelta(step.dps_delta or 0)
   )
-end
-
-function NS.collectCrestUpgradeOpportunities(specKey)
-  local results = {}
-  if not NS.crestUpgradeDataReady or not NS.crestUpgradeDataReady() then
-    return results, "Crest upgrade data unavailable"
-  end
-  for _, slotId in ipairs(UPGRADE_SLOT_IDS) do
-    local slotName = NS.SLOT_ID_TO_NAME[slotId]
-    if slotName then
-      local invSlot = GetInventorySlotInfo(slotName)
-      if invSlot then
-        local link = getEquippedItemLink(invSlot)
-        if link then
-          primeItemInfo(link, tonumber(link:match("item:(%d+)")))
-          local row = analyzeEquippedCrestUpgrade(invSlot, link, slotId, specKey)
-          if row then
-            table.insert(results, row)
-          end
-        end
-      end
-    end
-  end
-
-  table.sort(results, function(a, b)
-    return (a.dps_per_crest or 0) > (b.dps_per_crest or 0)
-  end)
-
-  if #results == 0 then
-    return results, "No upgradeable equipped gear with crest costs found."
-  end
-  return results, nil
 end
 
 local MAX_ITEM_STAT_READY_RETRIES = 20
