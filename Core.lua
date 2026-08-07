@@ -44,6 +44,8 @@ MR_MYTHICAL_DPS_CONFIG = MR_MYTHICAL_DPS_CONFIG or {
   loadout_scan_yield_every = 40,
   scan_performance_mode = "balanced",
   profile_by_prefix = {},
+  hero_spec_profile_map = {},
+  sporefall_journal_ids = {},
   profile_mode = "auto",
   debug = false,
   gear_advisor_point = nil,
@@ -62,6 +64,12 @@ if type(MR_MYTHICAL_DPS_CONFIG.bag_item_selection) ~= "table" then
 end
 if type(MR_MYTHICAL_DPS_CONFIG.profile_by_prefix) ~= "table" then
   MR_MYTHICAL_DPS_CONFIG.profile_by_prefix = {}
+end
+if type(MR_MYTHICAL_DPS_CONFIG.hero_spec_profile_map) ~= "table" then
+  MR_MYTHICAL_DPS_CONFIG.hero_spec_profile_map = {}
+end
+if type(MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids) ~= "table" then
+  MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids = {}
 end
 
 if MR_MYTHICAL_DPS_CONFIG.scan_performance_mode == nil then
@@ -651,6 +659,112 @@ function NS.formatCrestCostLabel(cost, baseCost, currencyId, discounted)
     return string.format("Free (%s)", name)
   end
   return string.format("%d %s", amount, name)
+end
+
+--- Compact crest cost amount only (pair with createCrestCurrencyIcon for hover tooltips).
+function NS.formatCrestCostCompact(cost, baseCost, currencyId, discounted)
+  local amount = tonumber(cost) or 0
+  if amount <= 0 then
+    return "Free"
+  end
+  return tostring(amount)
+end
+
+function NS.getCrestCurrencyIconFileID(currencyId)
+  if currencyId and C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo then
+    local info = C_CurrencyInfo.GetCurrencyInfo(currencyId)
+    if info and info.iconFileID then
+      return info.iconFileID
+    end
+  end
+  return nil
+end
+
+function NS.showCrestCurrencyTooltip(owner, currencyId)
+  if not owner or not currencyId or not GameTooltip then
+    return
+  end
+  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+  if GameTooltip.SetCurrencyByID then
+    GameTooltip:SetCurrencyByID(currencyId)
+  else
+    local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(currencyId)
+    GameTooltip:AddLine(info and info.name or "Crest", 1, 1, 1)
+    GameTooltip:Show()
+  end
+end
+
+function NS.hideCrestCurrencyTooltip()
+  if GameTooltip then
+    GameTooltip:Hide()
+  end
+end
+
+--- Creates a crest currency icon button that shows the currency tooltip on hover.
+function NS.createCrestCurrencyIcon(parent, currencyId, size)
+  size = size or 14
+  local btn = CreateFrame("Button", nil, parent)
+  btn:SetSize(size, size)
+  local tex = btn:CreateTexture(nil, "ARTWORK")
+  tex:SetAllPoints(btn)
+  local iconFileID = NS.getCrestCurrencyIconFileID(currencyId)
+  if iconFileID then
+    tex:SetTexture(iconFileID)
+  end
+  btn.currencyId = currencyId
+  btn:SetScript("OnEnter", function(self)
+    NS.showCrestCurrencyTooltip(self, self.currencyId)
+  end)
+  btn:SetScript("OnLeave", function()
+    NS.hideCrestCurrencyTooltip()
+  end)
+  return btn
+end
+
+--- Clears and fills a container with Owned: [icon] qty [icon] qty ... (icons are hoverable).
+function NS.fillCrestBalanceContainer(container, opts)
+  if not container then
+    return
+  end
+  opts = opts or {}
+  local iconSize = opts.iconSize or 14
+  local textColor = opts.textColor or { 0.62, 0.68, 0.74 }
+
+  if container._crestBalanceChildren then
+    for _, child in ipairs(container._crestBalanceChildren) do
+      child:Hide()
+      child:SetParent(nil)
+    end
+  end
+  container._crestBalanceChildren = {}
+
+  local function track(child)
+    table.insert(container._crestBalanceChildren, child)
+    return child
+  end
+
+  local label = container:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  track(label)
+  label:SetPoint("LEFT", container, "LEFT", 0, 0)
+  label:SetText(NS.MSG_CREST_BALANCES_PREFIX or "Owned:")
+  label:SetTextColor(textColor[1], textColor[2], textColor[3])
+
+  local anchor = label
+  for _, currencyId in ipairs(NS.CREST_CURRENCY_IDS or {}) do
+    local icon = track(NS.createCrestCurrencyIcon(container, currencyId, iconSize))
+    icon:SetPoint("LEFT", anchor, "RIGHT", 8, 0)
+
+    local qty = container:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    track(qty)
+    qty:SetPoint("LEFT", icon, "RIGHT", 2, 0)
+    local amount = 0
+    if NS.getCrestCurrencyBalance then
+      amount = NS.getCrestCurrencyBalance(currencyId) or 0
+    end
+    qty:SetText(tostring(amount))
+    qty:SetTextColor(textColor[1], textColor[2], textColor[3])
+    anchor = qty
+  end
 end
 
 function NS.formatCrestIlvlLine(item)

@@ -43,11 +43,11 @@ local VAULT_WINNER_BORDER = { 1, 0.85, 0.25 }
 
 local GA_WIDTH = 920
 local GA_HEIGHT = 700
-local GA_PADDING = 14
+local GA_PADDING = 10
 local GA_SCROLL_INSET = 42
-local GA_ACTION_H = 56
-local GA_STATUS_H = 36
-local GA_HEADER_H = 26
+local GA_ACTION_H = 40
+local GA_STATUS_H = 22
+local GA_HEADER_H = 18
 local GA_LOADOUT_CURRENT_X = 100
 local GA_LOADOUT_REC_X = 380
 local GA_LOADOUT_ITEM_ICON = 22
@@ -55,7 +55,7 @@ local GA_CREST_CURRENT_X = 100
 local GA_CREST_STEP_X = 248
 local GA_CREST_STEP_WIDTH = 178
 local GA_CREST_AFTER_X = GA_CREST_STEP_X + GA_CREST_STEP_WIDTH + 8
-local GA_CREST_ROW_H = 52
+local GA_CREST_ROW_H = 36
 local GA_CREST_DPS_RIGHT = 8
 local GA_CREST_DPS_WIDTH = 120
 local GA_CREST_COST_WIDTH = 140
@@ -648,9 +648,13 @@ local function refreshCrestChrome()
   if not advisorFrame then
     return
   end
-  if advisorFrame.crestBalanceText then
-    local balanceLine = NS.formatCrestBalancesLine and NS.formatCrestBalancesLine() or ""
-    advisorFrame.crestBalanceText:SetText(balanceLine)
+  if advisorFrame.crestBalanceBar and NS.fillCrestBalanceContainer then
+    NS.fillCrestBalanceContainer(advisorFrame.crestBalanceBar, {
+      iconSize = 14,
+      textColor = { 0.62, 0.68, 0.74 },
+    })
+  elseif advisorFrame.crestBalanceText and NS.formatCrestBalancesLine then
+    advisorFrame.crestBalanceText:SetText(NS.formatCrestBalancesLine() or "")
   end
 end
 
@@ -1080,14 +1084,22 @@ syncAdvisorStatusText = function()
     return
   end
   if currentMode == "crests" then
-    if crestPlanSummary then
-      setStatusText(crestPlanSummary, { 0.55, 1, 0.65 })
-    elseif advisorScanRunner then
+    if advisorScanRunner then
       setStatusText(NS.MSG_CREST_SCANNING, { 0.95, 0.85, 0.45 })
+      if advisorFrame.statusFrame then
+        advisorFrame.statusFrame:SetHeight(GA_STATUS_H)
+        advisorFrame.statusFrame:Show()
+      end
     else
-      setStatusText(NS.MSG_CREST_MODE_HINT)
+      setStatusText("")
+      if advisorFrame.statusFrame then
+        advisorFrame.statusFrame:SetHeight(1)
+      end
     end
     return
+  end
+  if advisorFrame.statusFrame then
+    advisorFrame.statusFrame:SetHeight(GA_STATUS_H)
   end
   if isShowingLoadoutResults() and loadoutSummary then
     if next(pendingEquips) or countLoadoutEquipsByState("done") > 0 or countLoadoutEquipsByState("failed") > 0 then
@@ -2001,7 +2013,7 @@ end
 local function renderCrestSectionDivider(itemList, listWidth, label, yOffset)
   local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
   table.insert(advisorRows, row)
-  row:SetSize(listWidth, 24)
+  row:SetSize(listWidth, 14)
   row:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
   row:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
   row:SetBackdropColor(0.1, 0.1, 0.13, 0.55)
@@ -2010,32 +2022,12 @@ local function renderCrestSectionDivider(itemList, listWidth, label, yOffset)
   text:SetPoint("LEFT", row, "LEFT", 10, 0)
   text:SetText(label)
   text:SetTextColor(0.5, 0.54, 0.58)
-  return yOffset + 28
+  return yOffset + 16
 end
 
-local function renderCrestPlanSection(itemList, listWidth, yOffset)
-  if not crestPlanIsActive() then
-    return yOffset
-  end
-
-  local panel = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
-  table.insert(advisorRows, panel)
-  panel:SetSize(listWidth, 28)
-  panel:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
-  panel:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 8,
-    insets = { left = 2, right = 2, top = 2, bottom = 2 },
-  })
-  panel:SetBackdropColor(0.08, 0.14, 0.11, 0.95)
-  panel:SetBackdropBorderColor(0.25, 0.55, 0.35, 0.9)
-
-  local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  title:SetPoint("LEFT", panel, "LEFT", 10, 0)
-  title:SetText(string.format("%s - %d step(s)", NS.CREST_PLAN_TITLE, #crestSpendPlan))
-  title:SetTextColor(0.55, 1, 0.65)
-  return yOffset + 32
+local function renderCrestPlanSection(_itemList, _listWidth, yOffset)
+  -- Plan banner removed to reduce clutter; plan steps still render first.
+  return yOffset
 end
 
 local function sortCrestDisplayRows(rows)
@@ -2139,20 +2131,46 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
     )
   end
 
+  local costAnchorX = crestColumnRight(listWidth, "cost")
+  local costIcon
+  if item.currency_id and NS.createCrestCurrencyIcon then
+    costIcon = NS.createCrestCurrencyIcon(row, item.currency_id, 14)
+    costIcon:SetPoint("RIGHT", row, "RIGHT", costAnchorX, 4)
+  end
+
   local costText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  costText:SetPoint("RIGHT", row, "RIGHT", crestColumnRight(listWidth, "cost"), 2)
-  costText:SetWidth(GA_CREST_COST_WIDTH)
+  if costIcon then
+    costText:SetPoint("RIGHT", costIcon, "LEFT", -3, 0)
+  else
+    costText:SetPoint("RIGHT", row, "RIGHT", costAnchorX, 2)
+  end
+  costText:SetWidth(GA_CREST_COST_WIDTH - 18)
   costText:SetJustifyH("RIGHT")
+  costText:SetWordWrap(false)
   local costLabel = item.crest_label or ""
+  if NS.formatCrestCostCompact then
+    costLabel = NS.formatCrestCostCompact(item.crest_cost, item.crest_cost_base, item.currency_id, item.crest_discounted)
+  end
   costText:SetText(costLabel)
   NS.setCrestCostTextColor(costText, item)
 
+  local ownedIcon
+  if item.currency_id and item.crest_owned ~= nil and NS.createCrestCurrencyIcon then
+    ownedIcon = NS.createCrestCurrencyIcon(row, item.currency_id, 12)
+    ownedIcon:SetPoint("TOPRIGHT", costIcon or costText, "BOTTOMRIGHT", 0, -2)
+  end
+
   local ownedText = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  ownedText:SetPoint("TOPRIGHT", costText, "BOTTOMRIGHT", 0, -1)
-  ownedText:SetWidth(GA_CREST_COST_WIDTH)
+  if ownedIcon then
+    ownedText:SetPoint("RIGHT", ownedIcon, "LEFT", -2, 0)
+  else
+    ownedText:SetPoint("TOPRIGHT", costText, "BOTTOMRIGHT", 0, -1)
+  end
+  ownedText:SetWidth(GA_CREST_COST_WIDTH - 16)
   ownedText:SetJustifyH("RIGHT")
+  ownedText:SetWordWrap(false)
   if item.currency_id and item.crest_owned ~= nil then
-    ownedText:SetText(string.format("%d owned", item.crest_owned))
+    ownedText:SetText(tostring(item.crest_owned))
     ownedText:SetTextColor(0.5, 0.54, 0.58)
   end
 
@@ -2163,14 +2181,7 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
   metricText:SetText(NS.formatDpsVsEquippedPerCrest(item.dps_delta, item.dps_per_crest))
   NS.setDpsDeltaTextColor(metricText, item.dps_delta)
 
-  if item.crest_plan_steps and item.crest_plan_steps > 1 and not item.is_plan_step then
-    local planNote = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    planNote:SetPoint("TOPRIGHT", metricText, "BOTTOMRIGHT", 0, -1)
-    planNote:SetText(string.format("%d steps in plan", item.crest_plan_steps))
-    planNote:SetTextColor(0.45, 0.95, 0.55)
-  end
-
-  return yOffset + GA_CREST_ROW_H + 4
+  return yOffset + GA_CREST_ROW_H + 1
 end
 
 renderAdvisorRows = function()
@@ -2185,7 +2196,7 @@ renderAdvisorRows = function()
 
   local itemList = advisorFrame.itemList
   local listWidth = itemList:GetWidth() or (GA_WIDTH - GA_PADDING - GA_SCROLL_INSET)
-  local yOffset = 4
+  local yOffset = 0
   local iconsPerLine = math.max(1, math.floor((listWidth - GA_ICONS_COL_X) / (GA_ICON_SIZE + GA_ICON_SPACING)))
 
   if currentMode == "crests" then
@@ -2213,7 +2224,6 @@ renderAdvisorRows = function()
         for i, step in ipairs(crestSpendPlan) do
           yOffset = renderCrestRow(itemList, listWidth, step, i, yOffset)
         end
-        yOffset = yOffset + 4
       end
       local displayRows = crestRowsForDisplay()
       if crestPlanIsActive() and #displayRows > 0 then
@@ -2256,7 +2266,7 @@ renderAdvisorRows = function()
 
   syncActionButtons()
 
-  itemList:SetHeight(math.max(40, yOffset + 8))
+  itemList:SetHeight(math.max(40, yOffset + 2))
   if advisorFrame.scrollFrame then
     advisorFrame.scrollFrame:UpdateScrollChildRect()
   end
@@ -2434,7 +2444,7 @@ local function runCrestSpendOptimization(runner, onDone)
           return
         end
         if phase == "optimize" or phase == "chains" then
-          setStatusText("Building crest spending plan…", { 0.95, 0.85, 0.45 })
+          setStatusText(NS.MSG_CREST_SCANNING, { 0.95, 0.85, 0.45 })
         end
       end,
       onComplete = function(plan, spent, totalDps, rows)
@@ -2495,7 +2505,7 @@ local function applyCrestSpendPlanView(opts, runner, onDone)
     refreshCrestChrome()
     renderAdvisorRows()
     if crestPlanSummary then
-      setStatusText(crestPlanSummary, { 0.55, 1, 0.65 })
+      setStatusText("")
       if opts.flash and crestSpendPlan and #crestSpendPlan > 0 and UIFrameFlash and advisorFrame and advisorFrame.summaryText then
         UIFrameFlash(advisorFrame.summaryText, 0.2, 0.6, 2, false, 0, 0)
       end
@@ -2563,7 +2573,7 @@ runCrestScan = function()
       if #crestRows > 0 then
         applyCrestSpendPlanView()
         if crestPlanSummary then
-          onAdvisorScanEnded(false, crestPlanSummary, { 0.55, 1, 0.65 })
+          onAdvisorScanEnded(false, "", nil)
         else
           onAdvisorScanEnded(false, statusMsg, { 0.55, 1, 0.65 })
         end
@@ -2582,7 +2592,7 @@ runCrestScan = function()
         return
       end
       if phase == "optimize" or phase == "chains" then
-        setStatusText("Building crest spending plan…", { 0.95, 0.85, 0.45 })
+        setStatusText(NS.MSG_CREST_SCANNING, { 0.95, 0.85, 0.45 })
       else
         setStatusText(NS.MSG_CREST_SCANNING, { 0.95, 0.85, 0.45 })
       end
@@ -2616,8 +2626,8 @@ runCrestScan = function()
       saveModeScanSnapshot(currentMode)
       renderAdvisorRows()
       if crestPlanSummary and crestSpendPlan and #crestSpendPlan > 0 then
-        setStatusText(crestPlanSummary, { 0.55, 1, 0.65 })
-        onAdvisorScanEnded(false, crestPlanSummary, { 0.55, 1, 0.65 })
+        setStatusText("")
+        onAdvisorScanEnded(false, "", nil)
       else
         setStatusText(statusMsg, { 0.55, 1, 0.65 })
         onAdvisorScanEnded(false, statusMsg, { 0.55, 1, 0.65 })
@@ -3068,7 +3078,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   end
 
   local statusFrame = CreateFrame("Frame", nil, f)
-  statusFrame:SetPoint("TOP", modeBar, "BOTTOM", 0, -4)
+  statusFrame:SetPoint("TOP", modeBar, "BOTTOM", 0, -2)
   statusFrame:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   statusFrame:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
   statusFrame:SetHeight(GA_STATUS_H)
@@ -3091,7 +3101,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   f.scanTimerText = scanTimerText
 
   local actionBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
-  actionBar:SetPoint("TOP", statusFrame, "BOTTOM", 0, -2)
+  actionBar:SetPoint("TOP", statusFrame, "BOTTOM", 0, -1)
   actionBar:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   actionBar:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
   actionBar:SetHeight(GA_ACTION_H)
@@ -3159,12 +3169,11 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   crestFilterFrame:Hide()
   f.crestFilterFrame = crestFilterFrame
 
-  local crestBalanceText = crestFilterFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  crestBalanceText:SetPoint("LEFT", crestFilterFrame, "LEFT", 0, 0)
-  crestBalanceText:SetPoint("RIGHT", crestFilterFrame, "RIGHT", 0, 0)
-  crestBalanceText:SetJustifyH("LEFT")
-  crestBalanceText:SetTextColor(0.62, 0.68, 0.74)
-  f.crestBalanceText = crestBalanceText
+  local crestBalanceBar = CreateFrame("Frame", nil, crestFilterFrame)
+  crestBalanceBar:SetPoint("LEFT", crestFilterFrame, "LEFT", 0, 0)
+  crestBalanceBar:SetPoint("RIGHT", crestFilterFrame, "RIGHT", 0, 0)
+  crestBalanceBar:SetHeight(20)
+  f.crestBalanceBar = crestBalanceBar
 
   local instanceDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorInstanceDropdown", actionBar, "UIDropDownMenuTemplate")
   instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, -2)
@@ -3199,7 +3208,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   f.lootHint = lootHint
 
   local headerFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
-  headerFrame:SetPoint("TOP", actionBar, "BOTTOM", 0, -4)
+  headerFrame:SetPoint("TOP", actionBar, "BOTTOM", 0, -2)
   headerFrame:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   headerFrame:SetPoint("RIGHT", f, "RIGHT", -GA_SCROLL_INSET, 0)
   headerFrame:SetHeight(GA_HEADER_H)
@@ -3251,8 +3260,8 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   f.headerCost = headerCost
 
   local scrollFrame = CreateFrame("ScrollFrame", "MrMythicalDpsGearAdvisorScroll", f, "UIPanelScrollFrameTemplate")
-  scrollFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -4)
-  scrollFrame:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -4)
+  scrollFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -2)
+  scrollFrame:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -2)
   scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA_SCROLL_INSET, GA_PADDING)
   f.scrollFrame = scrollFrame
 

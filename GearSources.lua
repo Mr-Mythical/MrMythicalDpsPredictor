@@ -607,14 +607,56 @@ end
 -- Sporefall uses discrete raid ilvls instead of the standard upgrade track ladder.
 local SPOREFALL_RAID_ILVLS = { 259, 272, 285, 298 }
 
+-- Journal instance IDs for Sporefall (locale-independent). Populated from English-name
+-- discovery and persisted in MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids.
+local SPOREFALL_JOURNAL_IDS = {
+  -- Seed known IDs here when confirmed; runtime discovery fills the rest.
+}
+
+local function rememberSporefallJournalId(instanceId)
+  instanceId = tonumber(instanceId)
+  if not instanceId then
+    return
+  end
+  SPOREFALL_JOURNAL_IDS[instanceId] = true
+  if MR_MYTHICAL_DPS_CONFIG then
+    MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids = MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids or {}
+    MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids[instanceId] = true
+  end
+end
+
+local function isKnownSporefallJournalId(instanceId)
+  instanceId = tonumber(instanceId)
+  if not instanceId then
+    return false
+  end
+  if SPOREFALL_JOURNAL_IDS[instanceId] then
+    return true
+  end
+  local saved = MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids
+  return saved and saved[instanceId] and true or false
+end
+
+local function nameLooksLikeSporefall(name)
+  local norm = normalizeInstanceName(name)
+  -- English token (enUS) plus common localized fragments when present in client data.
+  return norm:find("sporefall", 1, true) ~= nil
+    or norm:find("sporenfall", 1, true) ~= nil -- deDE-style
+    or norm:find("chuteedespores", 1, true) ~= nil -- frFR-style guess
+end
+
 local function isSporefallInstance(instanceId, instanceName)
-  local name = normalizeInstanceName(instanceName)
-  if name:find("sporefall", 1, true) then
+  if isKnownSporefallJournalId(instanceId) then
+    return true
+  end
+  if nameLooksLikeSporefall(instanceName) then
+    rememberSporefallJournalId(instanceId)
     return true
   end
   if instanceId and EJ_GetInstanceInfo then
-    local ejName = normalizeInstanceName(select(1, EJ_GetInstanceInfo(instanceId)))
-    if ejName:find("sporefall", 1, true) then
+    local ejName = select(1, EJ_GetInstanceInfo(instanceId))
+    if nameLooksLikeSporefall(ejName) then
+      rememberSporefallJournalId(instanceId)
       return true
     end
   end
@@ -3031,18 +3073,34 @@ function NS.getCrestCurrencyBalances()
   return balances
 end
 
+local function formatCrestCurrencyIconTag(currencyId, size)
+  size = size or 14
+  if currencyId and C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo then
+    local info = C_CurrencyInfo.GetCurrencyInfo(currencyId)
+    if info and info.iconFileID then
+      return string.format("|T%d:%d:%d:0:0|t", info.iconFileID, size, size)
+    end
+  end
+  return ""
+end
+
 function NS.formatCrestBalancesLine()
   local parts = {}
   for _, currencyId in ipairs(NS.CREST_CURRENCY_IDS or {}) do
     local qty = NS.getCrestCurrencyBalance(currencyId)
-    local name = getCurrencyLabel(currencyId)
-    name = name:gsub(" Dawncrests", ""):gsub(" Crests", ""):gsub(" Crest", "")
-    parts[#parts + 1] = string.format("%s %d", name, qty or 0)
+    local icon = formatCrestCurrencyIconTag(currencyId, 14)
+    if icon ~= "" then
+      parts[#parts + 1] = string.format("%s %d", icon, qty or 0)
+    else
+      local name = getCurrencyLabel(currencyId)
+      name = name:gsub(" Dawncrests", ""):gsub(" Crests", ""):gsub(" Crest", "")
+      parts[#parts + 1] = string.format("%s %d", name, qty or 0)
+    end
   end
   if #parts == 0 then
     return ""
   end
-  return (NS.MSG_CREST_BALANCES_PREFIX or "Owned:") .. " " .. table.concat(parts, "  /  ")
+  return (NS.MSG_CREST_BALANCES_PREFIX or "Owned:") .. " " .. table.concat(parts, "  ")
 end
 
 local function clearItemUpgradeContext()
@@ -3673,9 +3731,6 @@ function NS.buildCrestUpgradeChains(rows, specKey)
             else
               dpsByLevel[level] = dpsByLevel[level - 1] or 0
             end
-            if NS._crestScanYield then
-              NS._crestScanYield("chains")
-            end
             local marginal = (dpsByLevel[level] or 0) - (dpsByLevel[level - 1] or 0)
             local rankLabel = string.format("%d/%d", level, maxLevel)
             if trackString and trackString ~= "" then
@@ -3839,9 +3894,6 @@ function NS.optimizeCrestSpendPlan(rows, specKey)
   end
 
   local function search(plan, spent, wm, bal, depth)
-    if NS._crestScanYield then
-      NS._crestScanYield("optimize")
-    end
     local totalDps = sumPlanDps(plan)
     local key = encodePlanSearchKey(levels, bal, wm)
     if memo[key] and memo[key] >= totalDps then
@@ -3934,42 +3986,6 @@ function NS.optimizeCrestSpendPlan(rows, specKey)
   return best.plan, sumCrestSpendFromPlan(best.plan), best.dps, chains
 end
 
-function NS.collectCrestUpgradeOpportunities(specKey)
-  local results = {}
-  if not NS.crestUpgradeDataReady or not NS.crestUpgradeDataReady() then
-    return results, "Crest upgrade data unavailable"
-  end
-  for _, slotId in ipairs(UPGRADE_SLOT_IDS) do
-    local slotName = NS.SLOT_ID_TO_NAME[slotId]
-    if slotName then
-      local invSlot = GetInventorySlotInfo(slotName)
-      if invSlot then
-        local link = getEquippedItemLink(invSlot)
-        if link then
-          primeItemInfo(link, tonumber(link:match("item:(%d+)")))
-          local row = analyzeEquippedCrestUpgrade(invSlot, link, slotId, specKey)
-          if row then
-            table.insert(results, row)
-          end
-          if NS._crestScanYield then
-            NS._crestScanYield("collect")
-          end
-        end
-      end
-    end
-  end
-
-  table.sort(results, function(a, b)
-    return (a.dps_per_crest or 0) > (b.dps_per_crest or 0)
-  end)
-
-  if #results == 0 then
-    return results, "No upgradeable equipped gear with crest costs found."
-  end
-  return results, nil
-end
-
-
 function NS.computeGreedyCrestSpendPlan(rows, specKey)
   local plan, spent, totalDps = NS.optimizeCrestSpendPlan(rows, specKey)
   return plan, spent, totalDps
@@ -4012,6 +4028,38 @@ function NS.formatCrestPlanStepLine(step)
     costLabel,
     NS.formatDelta(step.dps_delta or 0)
   )
+end
+
+function NS.collectCrestUpgradeOpportunities(specKey)
+  local results = {}
+  if not NS.crestUpgradeDataReady or not NS.crestUpgradeDataReady() then
+    return results, "Crest upgrade data unavailable"
+  end
+  for _, slotId in ipairs(UPGRADE_SLOT_IDS) do
+    local slotName = NS.SLOT_ID_TO_NAME[slotId]
+    if slotName then
+      local invSlot = GetInventorySlotInfo(slotName)
+      if invSlot then
+        local link = getEquippedItemLink(invSlot)
+        if link then
+          primeItemInfo(link, tonumber(link:match("item:(%d+)")))
+          local row = analyzeEquippedCrestUpgrade(invSlot, link, slotId, specKey)
+          if row then
+            table.insert(results, row)
+          end
+        end
+      end
+    end
+  end
+
+  table.sort(results, function(a, b)
+    return (a.dps_per_crest or 0) > (b.dps_per_crest or 0)
+  end)
+
+  if #results == 0 then
+    return results, "No upgradeable equipped gear with crest costs found."
+  end
+  return results, nil
 end
 
 local MAX_ITEM_STAT_READY_RETRIES = 20

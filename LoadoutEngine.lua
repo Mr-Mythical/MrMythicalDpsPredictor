@@ -98,21 +98,9 @@ local function parseItemLinkExtraEnchantID(link)
 end
 
 local function itemHasEmbellishment(link)
-  if parseItemLinkExtraEnchantID(link) > 0 then
-    return true
-  end
-  if C_TooltipInfo and C_TooltipInfo.GetHyperlink then
-    local ok, data = pcall(C_TooltipInfo.GetHyperlink, link)
-    if ok and data and data.lines then
-      for _, line in ipairs(data.lines) do
-        local text = line.leftText or line.rightText or ""
-        if text ~= "" and text:upper():find("EMBELLISH", 1, true) then
-          return true
-        end
-      end
-    end
-  end
-  return false
+  -- Locale-safe: embellishments are encoded as the extra-enchant ID in the item link.
+  -- Do not scan tooltip text for the English word "Embellish".
+  return parseItemLinkExtraEnchantID(link) > 0
 end
 
 local function getPlayerSpecializationID()
@@ -218,15 +206,31 @@ local function readSetNameFromItemSetAPI(setID)
   return nil
 end
 
+local function buildItemSetNamePattern()
+  -- ITEM_SET_NAME is typically "Set: %s (%d/%d)" and is localized per client.
+  local fmt = rawget(_G, "ITEM_SET_NAME") or "Set: %s (%d/%d)"
+  local pat = fmt:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+  pat = pat:gsub("%%%%%d*%$?s", "(.+)")
+  pat = pat:gsub("%%%%%d*%$?d", "%%d+")
+  pat = pat:gsub("%%%%s", "(.+)")
+  pat = pat:gsub("%%%%d", "%%d+")
+  return "^" .. pat .. "$"
+end
+
+local itemSetNamePattern = buildItemSetNamePattern()
+
 local function extractSetNameFromTooltipLine(text)
   if not text or text == "" then
     return nil
   end
   local trimmed = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-  local fromSetPrefix = trimmed:match("^Set:%s*(.+)%s*%(%d+/%d+%)%s*$")
-  if fromSetPrefix and fromSetPrefix ~= "" then
-    return fromSetPrefix:gsub("^%s+", ""):gsub("%s+$", "")
+  if itemSetNamePattern then
+    local setName = trimmed:match(itemSetNamePattern)
+    if setName and setName ~= "" then
+      return setName:gsub("^%s+", ""):gsub("%s+$", "")
+    end
   end
+  -- Fallback: any line ending with (n/m) after a colon (class-prefixed set lines).
   local fromCountSuffix = trimmed:match("^(.+)%s*%(%d+/%d+%)%s*$")
   if fromCountSuffix then
     local normalized = fromCountSuffix:gsub("^%s+", ""):gsub("%s+$", "")
@@ -235,20 +239,6 @@ local function extractSetNameFromTooltipLine(text)
       if afterClass and afterClass ~= "" then
         return afterClass
       end
-    end
-    if normalized:find("Set", 1, true) or normalized:find(":", 1, true) then
-      return normalized
-    end
-  end
-  local fromClassPrefix = trimmed:match("^[%a%s]+:%s*(.+)$")
-  if fromClassPrefix and fromClassPrefix ~= "" then
-    local normalized = fromClassPrefix:gsub("^%s+", ""):gsub("%s+$", "")
-    if normalized:find("Armor", 1, true) or normalized:find("Vestments", 1, true)
-      or normalized:find("Regalia", 1, true) or normalized:find("Battlegear", 1, true)
-      or normalized:find("Raiment", 1, true) or normalized:find("Garments", 1, true)
-      or normalized:find("Trappings", 1, true) or normalized:find("Harness", 1, true)
-      or normalized:find("Vestments", 1, true) then
-      return normalized
     end
   end
   return nil

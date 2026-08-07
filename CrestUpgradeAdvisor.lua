@@ -10,7 +10,7 @@ local liteScanHandle = nil
 local liteActiveInvSlot = nil
 
 local LITE_WIDTH = 340
-local LITE_ROW_H = 50
+local LITE_ROW_H = 48
 local LITE_VISIBLE_ROWS = 7
 local LITE_SCROLL_H = LITE_ROW_H * LITE_VISIBLE_ROWS
 
@@ -114,13 +114,25 @@ local function renderLitePlan()
   end
 
   setLiteStatus(nil)
-  if litePanel.balanceText then
-    litePanel.balanceText:SetText(NS.formatCrestBalancesLine and NS.formatCrestBalancesLine() or "")
+  if litePanel.balanceBar and NS.fillCrestBalanceContainer then
+    NS.fillCrestBalanceContainer(litePanel.balanceBar, {
+      iconSize = 14,
+      textColor = { 0.58, 0.64, 0.6 },
+    })
+  elseif litePanel.balanceText and NS.formatCrestBalancesLine then
+    litePanel.balanceText:SetText(NS.formatCrestBalancesLine() or "")
   end
 
   local itemList = litePanel.itemList
   local listWidth = (itemList:GetWidth() or LITE_WIDTH) - 8
   local yOffset = 2
+
+  local COST_COL_W = 88
+  local DPS_COL_W = 100
+  local ICON_SIZE = 28
+  local leftPad = 8
+  local textLeft = leftPad + ICON_SIZE + 6
+  local textWidth = math.max(80, listWidth - textLeft - COST_COL_W - 12)
 
   for _, step in ipairs(litePlan) do
     local isActive = liteActiveInvSlot and step.inv_slot and step.inv_slot == liteActiveInvSlot
@@ -145,32 +157,76 @@ local function renderLitePlan()
       accent:SetWidth(3)
     end
 
+    local iconBtn = CreateFrame("Button", nil, row)
+    iconBtn:SetSize(ICON_SIZE, ICON_SIZE)
+    iconBtn:SetPoint("LEFT", row, "LEFT", leftPad, 0)
+    local iconTex = iconBtn:CreateTexture(nil, "ARTWORK")
+    iconTex:SetAllPoints(iconBtn)
+    local iconLink = step.preview_link or step.link
+    if iconLink then
+      local iconTexture = GetItemIcon(iconLink)
+      if iconTexture then
+        iconTex:SetTexture(iconTexture)
+      end
+      iconBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetHyperlink(iconLink)
+        GameTooltip:Show()
+      end)
+      iconBtn:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+      end)
+    end
+
     local stepBadge = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    stepBadge:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -6)
-    stepBadge:SetWidth(72)
+    stepBadge:SetPoint("TOPLEFT", row, "TOPLEFT", textLeft, -4)
+    stepBadge:SetWidth(textWidth)
     stepBadge:SetJustifyH("LEFT")
-    stepBadge:SetText(string.format("#%d %s", step.order or 0, step.slot_label or ""))
+    stepBadge:SetWordWrap(false)
+    local itemName = step.preview_name or step.name or ""
+    if itemName ~= "" then
+      stepBadge:SetText(string.format("#%d %s - %s", step.order or 0, step.slot_label or "", itemName))
+    else
+      stepBadge:SetText(string.format("#%d %s", step.order or 0, step.slot_label or ""))
+    end
     stepBadge:SetTextColor(isActive and 0.55 or 0.62, isActive and 1 or 0.66, isActive and 0.65 or 0.7)
 
     local upgradeLine = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    upgradeLine:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -22)
-    upgradeLine:SetWidth(listWidth - 16)
+    upgradeLine:SetPoint("TOPLEFT", row, "TOPLEFT", textLeft, -20)
+    upgradeLine:SetWidth(textWidth)
     upgradeLine:SetJustifyH("LEFT")
+    upgradeLine:SetWordWrap(false)
     upgradeLine:SetText(NS.formatCrestUpgradeStepLine(step))
     upgradeLine:SetTextColor(0.68, 0.72, 0.78)
 
+    local costIcon
+    if step.currency_id and NS.createCrestCurrencyIcon then
+      costIcon = NS.createCrestCurrencyIcon(row, step.currency_id, 14)
+      costIcon:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8, -6)
+    end
+
     local costText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    costText:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -8, 4)
-    costText:SetWidth(130)
+    if costIcon then
+      costText:SetPoint("RIGHT", costIcon, "LEFT", -3, 0)
+    else
+      costText:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8, -6)
+    end
+    costText:SetWidth(COST_COL_W - 18)
     costText:SetJustifyH("RIGHT")
-    costText:SetText(step.crest_label or tostring(step.crest_cost or 0))
+    costText:SetWordWrap(false)
+    local costLabel = step.crest_label
+    if NS.formatCrestCostCompact then
+      costLabel = NS.formatCrestCostCompact(step.crest_cost, step.crest_cost_base, step.currency_id, step.crest_discounted)
+    end
+    costText:SetText(costLabel or tostring(step.crest_cost or 0))
     NS.setCrestCostTextColor(costText, step)
 
     local dpsText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    dpsText:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 8, 4)
-    dpsText:SetWidth(120)
-    dpsText:SetJustifyH("LEFT")
-    dpsText:SetText(NS.formatDelta(step.dps_delta or 0))
+    dpsText:SetPoint("TOPRIGHT", costIcon or costText, "BOTTOMRIGHT", 0, -2)
+    dpsText:SetWidth(DPS_COL_W)
+    dpsText:SetJustifyH("RIGHT")
+    dpsText:SetWordWrap(false)
+    dpsText:SetText(NS.formatDelta(step.dps_delta or 0) .. " DPS")
     NS.setDpsDeltaTextColor(dpsText, step.dps_delta)
 
     yOffset = yOffset + LITE_ROW_H
@@ -217,25 +273,21 @@ local function ensureLitePanel()
   brand:SetJustifyH("LEFT")
   brand:SetText("Mr. Mythical")
   brand:SetTextColor(0.45, 0.5, 0.52)
-
-  local balanceText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  balanceText:SetPoint("TOPLEFT", brand, "BOTTOMLEFT", 0, -6)
-  balanceText:SetPoint("RIGHT", f, "RIGHT", -12, 0)
-  balanceText:SetJustifyH("LEFT")
-  balanceText:SetWordWrap(true)
-  balanceText:SetNonSpaceWrap(true)
-  balanceText:SetTextColor(0.58, 0.64, 0.6)
-  f.balanceText = balanceText
+  local balanceBar = CreateFrame("Frame", nil, f)
+  balanceBar:SetPoint("TOPLEFT", brand, "BOTTOMLEFT", 0, -3)
+  balanceBar:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  balanceBar:SetHeight(18)
+  f.balanceBar = balanceBar
 
   local statusText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  statusText:SetPoint("TOPLEFT", balanceText, "BOTTOMLEFT", 0, -10)
+  statusText:SetPoint("TOPLEFT", balanceBar, "BOTTOMLEFT", 0, -10)
   statusText:SetPoint("RIGHT", f, "RIGHT", -12, 0)
   statusText:SetJustifyH("LEFT")
   statusText:SetWordWrap(true)
   f.statusText = statusText
 
   local scrollFrame = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-  scrollFrame:SetPoint("TOPLEFT", balanceText, "BOTTOMLEFT", -4, -10)
+  scrollFrame:SetPoint("TOPLEFT", balanceBar, "BOTTOMLEFT", -4, -6)
   scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -28, 36)
   f.scrollFrame = scrollFrame
 
@@ -297,8 +349,13 @@ local function finishLiteScanEmpty(note, panel)
     msg = msg .. " (" .. note .. ")"
   end
   setLiteStatus(msg, 0.55, 0.6, 0.65)
-  if panel and panel.balanceText then
-    panel.balanceText:SetText(NS.formatCrestBalancesLine and NS.formatCrestBalancesLine() or "")
+  if panel and panel.balanceBar and NS.fillCrestBalanceContainer then
+    NS.fillCrestBalanceContainer(panel.balanceBar, {
+      iconSize = 14,
+      textColor = { 0.58, 0.64, 0.6 },
+    })
+  elseif panel and panel.balanceText and NS.formatCrestBalancesLine then
+    panel.balanceText:SetText(NS.formatCrestBalancesLine() or "")
   end
 end
 
