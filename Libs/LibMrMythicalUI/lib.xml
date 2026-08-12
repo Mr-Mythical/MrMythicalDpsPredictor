@@ -1,0 +1,34 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
+..\FrameXML\UI.xsd">
+	<!-- Loaded by embeds.xml after LibStub -->
+	<Script file="Core.lua"/>
+	<Script file="Theme.lua"/>
+	<Script file="DemoScene.lua"/>
+	<Script file="SVG.lua"/>
+	<Script file="Customize.lua"/>
+	<Script file="Widgets\Panel.lua"/>
+	<Script file="Widgets\Button.lua"/>
+	<Script file="Widgets\Icon.lua"/>
+	<Script file="Widgets\NavTab.lua"/>
+	<Script file="Widgets\CloseButton.lua"/>
+	<Script file="Widgets\Progress.lua"/>
+	<Script file="Widgets\Header.lua"/>
+	<Script file="Widgets\Divider.lua"/>
+	<Script file="Widgets\Checkbox.lua"/>
+	<Script file="Widgets\Label.lua"/>
+	<Script file="Widgets\Slider.lua"/>
+	<Script file="Widgets\Dropdown.lua"/>
+	<Script file="Widgets\ScrollFrame.lua"/>
+	<Script file="Widgets\EditBox.lua"/>
+	<Script file="Widgets\StatusBar.lua"/>
+	<Script file="Widgets\TabGroup.lua"/>
+	<Script file="Widgets\ListRow.lua"/>
+	<Script file="Widgets\DataRow.lua"/>
+	<Script file="Widgets\Window.lua"/>
+	<Script file="Widgets\Layout.lua"/>
+	<Script file="Widgets\ConfirmDialog.lua"/>
+	<Script file="Widgets\ColorPicker.lua"/>
+	<Script file="Widgets\MultiLineEditBox.lua"/>
+	<Script file="Widgets\Section.lua"/>
+	<Script file="Widgets\Tooltip.lua"/>
+</Ui>
