@@ -354,7 +354,7 @@ local function ensureLitePanel()
   local advisorBtn = NS.createUIButton(f, {
     text = NS.MSG_CREST_LITE_OPEN_ADVISOR,
     width = 140,
-    height = 22,
+    height = 24,
     onClick = function()
       if NS.openGearAdvisor then
         NS.openGearAdvisor(nil, "crests")

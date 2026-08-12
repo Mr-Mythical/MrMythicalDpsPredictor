@@ -182,7 +182,7 @@ local function ensureVaultPopup()
   local advisorBtn = NS.createUIButton(f, {
     text = "Gearing Dashboard",
     width = 130,
-    height = 22,
+    height = 24,
     onClick = function()
       NS.openGearAdvisor(nil, "bags")
     end,

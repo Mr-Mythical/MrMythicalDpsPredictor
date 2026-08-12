@@ -46,8 +46,11 @@ local GA_WIDTH = 920
 local GA_HEIGHT = 700
 local GA_PADDING = 10
 local GA_SCROLL_INSET = 42
-local GA_ACTION_H = 40
-local GA_FILTER_ROW_H = 28
+-- Chrome control scale: one height for buttons, tabs, checkboxes, dropdowns.
+local GA_CTRL_H = 24
+local GA_ACTION_H = 36
+local GA_FILTER_ROW_H = 32
+local GA_MODE_BAR_H = 30
 local GA_STATUS_H = 22
 local GA_HEADER_H = 18
 local GA_LOADOUT_CURRENT_X = 100
@@ -113,7 +116,7 @@ local function layoutUpgradeFilterChecks()
   if upgradesOnly then
     upgradesOnly:ClearAllPoints()
     upgradesOnly:SetPoint("LEFT", frame, "LEFT", 10, 0)
-    upgradesOnly:SetSize(150, 22)
+    upgradesOnly:SetSize(150, GA_CTRL_H)
     if upgradesOnly.Label then
       upgradesOnly.Label:ClearAllPoints()
       local box = upgradesOnly.BoxBorder or upgradesOnly
@@ -130,7 +133,7 @@ local function layoutUpgradeFilterChecks()
     else
       sidegrade:SetPoint("LEFT", frame, "LEFT", 10, 0)
     end
-    sidegrade:SetSize(180, 22)
+    sidegrade:SetSize(180, GA_CTRL_H)
     if sidegrade.Label then
       sidegrade.Label:ClearAllPoints()
       local box = sidegrade.BoxBorder or sidegrade
@@ -836,7 +839,7 @@ local function layoutFarmControlsRow()
   if groupCheck then
     groupCheck:ClearAllPoints()
     groupCheck:SetPoint("LEFT", bar, "LEFT", 10, 0)
-    groupCheck:SetSize(160, 22)
+    groupCheck:SetSize(160, GA_CTRL_H)
     if groupCheck.Label then
       groupCheck.Label:ClearAllPoints()
       local box = groupCheck.BoxBorder or groupCheck
@@ -875,7 +878,7 @@ local function layoutLootActionBar()
     if showLootTabs then
       findBtn:SetPoint("LEFT", lootViewBar, "RIGHT", 10, 0)
     else
-      findBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
+      findBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
     end
   end
 
@@ -1024,7 +1027,7 @@ syncScanPerfControls = function()
 
   if showLoot and actionBar and instanceDropdown then
     instanceDropdown:ClearAllPoints()
-    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, -2)
+    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
   end
   if showLoot and ilvlDropdown and instanceDropdown then
     ilvlDropdown:ClearAllPoints()
@@ -1035,7 +1038,7 @@ syncScanPerfControls = function()
     if showLoot and ilvlDropdown and ilvlDropdown:IsShown() then
       perfControl:SetPoint("RIGHT", ilvlDropdown, "LEFT", -8, 0)
     else
-      perfControl:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -4)
+      perfControl:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
     end
   end
   if showLoot and advisorFrame.lootHint then
@@ -2365,7 +2368,7 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
       local equipBtn = NS.createUIButton(row, {
         text = "Retry",
         width = 60,
-        height = 22,
+        height = GA_CTRL_H,
         onClick = function()
           loadoutEquipState[equipKey] = nil
           tryEquipLoadoutItem(item)
@@ -2378,7 +2381,7 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
       local equipBtn = NS.createUIButton(row, {
         text = (equipState == "pending") and "..." or "Equip",
         width = 60,
-        height = 22,
+        height = GA_CTRL_H,
       })
       equipBtn:SetPoint("RIGHT", row, "RIGHT", -88, 0)
       if equipState == "pending" then
@@ -3773,6 +3776,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     profileDropdown = Lib:CreateDropdown(f, {
       name = "MrMythicalDpsAdvisorProfileDropdown",
       width = 220,
+      height = GA_CTRL_H,
     })
     profileDropdown:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", 0, -16)
   else
@@ -3790,7 +3794,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   modeBar:SetPoint("TOP", profileDropdown, "BOTTOM", 0, -8)
   modeBar:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   modeBar:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
-  modeBar:SetHeight(26)
+  modeBar:SetHeight(GA_MODE_BAR_H)
   if Lib then
     local modeBg = Lib:CreateColorTexture(modeBar, Lib.Theme.COLORS.NAV_BACKGROUND, "BACKGROUND")
     modeBg:SetAllPoints()
@@ -3811,14 +3815,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
         text = mode.label,
         id = mode.id,
         width = tabWidth,
-        height = 22,
+        height = GA_CTRL_H,
         selected = false,
       })
       btn:SetPoint("LEFT", modeBar, "LEFT", mx, 0)
       btn.text = btn.Label
     else
       btn = CreateFrame("Button", nil, modeBar, "BackdropTemplate")
-      btn:SetSize(tabWidth, 22)
+      btn:SetSize(tabWidth, GA_CTRL_H)
       btn:SetPoint("LEFT", modeBar, "LEFT", mx, 0)
       btn:SetBackdrop({ bgFile = "Interface/Buttons/WHITE8X8", tile = true, tileSize = 8 })
       btn:SetBackdropColor(0.14, 0.14, 0.18, 0.9)
@@ -3879,22 +3883,22 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local findLoadoutBtn = NS.createUIButton(actionBar, {
     text = NS.MSG_RUN_SCAN or "Run Scan",
     width = 90,
-    height = 24,
+    height = GA_CTRL_H,
     onClick = runFindLoadout,
   })
-  findLoadoutBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
+  findLoadoutBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
   f.findLoadoutBtn = findLoadoutBtn
 
   local lootViewBar = CreateFrame("Frame", nil, actionBar)
   lootViewBar:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
-  lootViewBar:SetSize(204, 24)
+  lootViewBar:SetSize(210, GA_CTRL_H)
   lootViewBar:Hide()
   f.lootViewBar = lootViewBar
 
   local lootFarmViewBtn = NS.createUIButton(lootViewBar, {
     text = NS.MSG_FARM_VIEW_FARM or "Farm priority",
     width = 110,
-    height = 22,
+    height = GA_CTRL_H,
     onClick = function()
       setLootViewMode("farm")
     end,
@@ -3905,7 +3909,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local lootSlotsViewBtn = NS.createUIButton(lootViewBar, {
     text = NS.MSG_FARM_VIEW_SLOTS or "BiS Scan",
     width = 88,
-    height = 22,
+    height = GA_CTRL_H,
     onClick = function()
       setLootViewMode("slots")
     end,
@@ -3944,7 +3948,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local farmGroupCheck = NS.createUICheckbox(farmControlsBar, {
     text = NS.MSG_FARM_GROUP_INSTANCE or "Group by instance",
     width = 160,
-    height = 22,
+    height = GA_CTRL_H,
     checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_group_by_instance == true,
     onClick = function(_, checked)
       setFarmGroupByInstance(checked)
@@ -3959,6 +3963,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     farmSortDropdown = Lib:CreateDropdown(farmControlsBar, {
       name = "MrMythicalDpsAdvisorFarmSortDropdown",
       width = 168,
+      height = GA_CTRL_H,
       items = farmSortItems,
       value = getFarmSortKey(),
       onValueChanged = function(_, value)
@@ -3988,20 +3993,20 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local changeSelectionBtn = NS.createUIButton(actionBar, {
     text = "Change Selection",
     width = 120,
-    height = 24,
+    height = GA_CTRL_H,
     onClick = returnToSelectionView,
   })
-  changeSelectionBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
+  changeSelectionBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
   changeSelectionBtn:Hide()
   f.changeSelectionBtn = changeSelectionBtn
 
   local stopScanBtn = NS.createUIButton(actionBar, {
     text = "Stop Scan",
     width = 90,
-    height = 24,
+    height = GA_CTRL_H,
     onClick = stopAdvisorScan,
   })
-  stopScanBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
+  stopScanBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
   stopScanBtn:Hide()
   f.stopScanBtn = stopScanBtn
 
@@ -4024,7 +4029,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local upgradesOnlyCheck = NS.createUICheckbox(upgradeFilterFrame, {
     text = "Upgrades only",
     width = 150,
-    height = 22,
+    height = GA_CTRL_H,
     checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only == true,
     onClick = function(self, checked)
       MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only = checked and true or false
@@ -4038,7 +4043,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local sidegradeCheck = NS.createUICheckbox(upgradeFilterFrame, {
     text = "Include sidegrades",
     width = 180,
-    height = 22,
+    height = GA_CTRL_H,
     checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades == true,
     onClick = function(self, checked)
       NS.setAdvisorIncludeSidegrades(checked)
@@ -4069,14 +4074,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local crestFilterFrame = CreateFrame("Frame", nil, actionBar)
   crestFilterFrame:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
-  crestFilterFrame:SetSize(700, 24)
+  crestFilterFrame:SetSize(700, GA_CTRL_H)
   crestFilterFrame:Hide()
   f.crestFilterFrame = crestFilterFrame
 
   local crestBalanceBar = CreateFrame("Frame", nil, crestFilterFrame)
   crestBalanceBar:SetPoint("LEFT", crestFilterFrame, "LEFT", 0, 0)
   crestBalanceBar:SetPoint("RIGHT", crestFilterFrame, "RIGHT", 0, 0)
-  crestBalanceBar:SetHeight(20)
+  crestBalanceBar:SetHeight(GA_CTRL_H)
   f.crestBalanceBar = crestBalanceBar
 
   local instanceDropdown
@@ -4086,16 +4091,18 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     instanceDropdown = Lib:CreateDropdown(actionBar, {
       name = "MrMythicalDpsAdvisorInstanceDropdown",
       width = 200,
+      height = GA_CTRL_H,
       minMenuWidth = 260,
       maxMenuWidth = 420,
     })
-    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, -2)
+    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
     instanceDropdown:Hide()
     f.instanceDropdown = instanceDropdown
 
     ilvlDropdown = Lib:CreateDropdown(actionBar, {
       name = "MrMythicalDpsAdvisorIlvlDropdown",
       width = 160,
+      height = GA_CTRL_H,
       minMenuWidth = 200,
       maxMenuWidth = 320,
     })
@@ -4106,13 +4113,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     perfDropdown = Lib:CreateDropdown(actionBar, {
       name = "MrMythicalDpsAdvisorPerfDropdown",
       width = 118,
+      height = GA_CTRL_H,
     })
-    perfDropdown:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -2)
+    perfDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
     f.perfDropdown = perfDropdown
   else
     -- TODO(MINOR 8+): remove UIDropDownMenuTemplate fallback once Lib is required
     instanceDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorInstanceDropdown", actionBar, "UIDropDownMenuTemplate")
-    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, -2)
+    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
     UIDropDownMenu_SetWidth(instanceDropdown, 200)
     instanceDropdown:Hide()
     f.instanceDropdown = instanceDropdown
@@ -4124,19 +4132,19 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     f.ilvlDropdown = ilvlDropdown
 
     perfDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorPerfDropdown", actionBar, "UIDropDownMenuTemplate")
-    perfDropdown:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -2)
+    perfDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
     UIDropDownMenu_SetWidth(perfDropdown, 118)
     f.perfDropdown = perfDropdown
   end
 
   local perfToggleBtn = NS.createUIButton(actionBar, {
     width = 132,
-    height = 24,
+    height = GA_CTRL_H,
     onClick = function()
       toggleAdvisorScanPerformance()
     end,
   })
-  perfToggleBtn:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -4)
+  perfToggleBtn:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
   perfToggleBtn:Hide()
   f.perfToggleBtn = perfToggleBtn
 
