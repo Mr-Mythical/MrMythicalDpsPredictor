@@ -45,7 +45,7 @@ MR_MYTHICAL_DPS_CONFIG = MR_MYTHICAL_DPS_CONFIG or {
   scan_performance_mode = "balanced",
   profile_by_prefix = {},
   hero_spec_profile_map = {},
-  sporefall_journal_ids = {},
+  tidebound_journal_ids = {},
   profile_mode = "auto",
   debug = false,
   gear_advisor_point = nil,
@@ -56,6 +56,9 @@ MR_MYTHICAL_DPS_CONFIG = MR_MYTHICAL_DPS_CONFIG or {
   gear_advisor_item_selection = {},
   gear_advisor_instance_id = "all",
   gear_advisor_loot_upgrade = "hero_3",
+  gear_advisor_loot_view = "farm",
+  gear_advisor_farm_sort = "ev",
+  gear_advisor_farm_group_by_instance = false,
   scan_progress_point = nil,
 }
 
@@ -68,8 +71,8 @@ end
 if type(MR_MYTHICAL_DPS_CONFIG.hero_spec_profile_map) ~= "table" then
   MR_MYTHICAL_DPS_CONFIG.hero_spec_profile_map = {}
 end
-if type(MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids) ~= "table" then
-  MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids = {}
+if type(MR_MYTHICAL_DPS_CONFIG.tidebound_journal_ids) ~= "table" then
+  MR_MYTHICAL_DPS_CONFIG.tidebound_journal_ids = {}
 end
 
 if MR_MYTHICAL_DPS_CONFIG.scan_performance_mode == nil then
@@ -93,12 +96,20 @@ end
 
 if MR_MYTHICAL_DPS_CONFIG.gear_finder_loot_ilvl and not MR_MYTHICAL_DPS_CONFIG.gear_finder_loot_upgrade then
   local legacyMap = {
+    -- Season 1 ilvls
     [250] = "champion_2",
     [253] = "champion_3",
     [256] = "champion_4",
     [259] = "hero_1",
     [263] = "hero_2",
     [266] = "hero_3",
+    -- Season 2 ilvls
+    [295] = "champion_2",
+    [298] = "champion_3",
+    [302] = "champion_4",
+    [305] = "hero_1",
+    [308] = "hero_2",
+    [311] = "hero_3",
   }
   MR_MYTHICAL_DPS_CONFIG.gear_finder_loot_upgrade = legacyMap[tonumber(MR_MYTHICAL_DPS_CONFIG.gear_finder_loot_ilvl)] or "hero_3"
 end
@@ -150,6 +161,18 @@ if not MR_MYTHICAL_DPS_CONFIG.gear_advisor_point and MR_MYTHICAL_DPS_CONFIG.dash
 end
 if MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades == nil then
   MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades = false
+end
+if MR_MYTHICAL_DPS_CONFIG.gear_advisor_loot_view ~= "slots" then
+  MR_MYTHICAL_DPS_CONFIG.gear_advisor_loot_view = "farm"
+end
+do
+  local farmSort = MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_sort
+  if farmSort ~= "best" and farmSort ~= "name" and farmSort ~= "ev" then
+    MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_sort = "ev"
+  end
+end
+if MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_group_by_instance == nil then
+  MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_group_by_instance = false
 end
 local function migrateBagSelectionToAdvisor()
   local legacy = MR_MYTHICAL_DPS_CONFIG.bag_item_selection
@@ -596,8 +619,15 @@ NS.LOADOUT_ROW_ALREADY_OPTIMAL = "Already optimal"
 
 NS.MSG_NO_PROFILE_LABEL = "No profile — " .. NS.DASHBOARD_SLASH
 NS.MSG_NO_PROFILE_ACTION = "Select a profile in " .. NS.DASHBOARD_SLASH .. "."
-NS.MSG_FIND_LOADOUT_HINT = "Toggle items, then Find Loadout."
-NS.MSG_LOOT_MODE_HINT = "Pick instance & track, then Find Loadout."
+NS.MSG_FIND_LOADOUT_HINT = "Toggle items, then Run Scan."
+NS.MSG_LOOT_MODE_HINT = "Pick instance & track, then choose Farm priority or BiS Scan."
+NS.MSG_FARM_PRIORITY_HINT = "Boss EV from single-swap estimates (equal drop chance)."
+NS.MSG_FARM_PRIORITY_EMPTY = "No positive upgrades vs your equipped gear at this track."
+NS.MSG_FARM_VIEW_FARM = "Farm priority"
+NS.MSG_FARM_VIEW_SLOTS = "BiS Scan"
+NS.MSG_RUN_SCAN = "Run Scan"
+NS.MSG_FARM_GROUP_INSTANCE = "Group by instance"
+NS.MSG_FARM_SORT_PREFIX = "Sort: "
 NS.MSG_SCAN_STATUS = "%s scored · %s selected. %s"
 NS.MSG_SCAN_NO_COMBOS = "No valid combinations."
 NS.MSG_SCAN_COUNTING = "Counting… %s. %s"
@@ -1181,12 +1211,14 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+eventFrame:RegisterEvent("PLAYER_AVG_ITEM_LEVEL_UPDATE")
+eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 if C_ClassTalents then
   eventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 end
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 
-eventFrame:SetScript("OnEvent", function(_, event)
+eventFrame:SetScript("OnEvent", function(_, event, unit)
   if event == "PLAYER_LOGIN" then
     NS.detectAndCacheProfiles()
     NS.tryAutoMatchProfile()
@@ -1221,7 +1253,9 @@ eventFrame:SetScript("OnEvent", function(_, event)
     if NS.openGearAdvisor and #NS.active_spec_keys > 1 and not NS.getActiveProfileKey() then
       NS.openGearAdvisor(nil, nil, true)
     end
-  elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+  elseif event == "PLAYER_EQUIPMENT_CHANGED"
+    or event == "PLAYER_AVG_ITEM_LEVEL_UPDATE"
+    or (event == "UNIT_INVENTORY_CHANGED" and unit == "player") then
     NS.onProfileContextChanged()
   elseif event == "TRAIT_CONFIG_UPDATED" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
     if MR_MYTHICAL_DPS_CONFIG.profile_mode ~= "manual" then

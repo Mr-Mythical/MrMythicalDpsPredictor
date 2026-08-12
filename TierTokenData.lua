@@ -1,29 +1,35 @@
 local ADDON_NAME, NS = ...
 
--- Midnight S1 tier tokens (Nullcore / Riftbloom — The Voidspire).
+-- Midnight S2 tier tokens (Venomous Abyss — Tier 36).
 -- Maps token item ID -> class -> tier piece item ID.
--- Prior-expansion maps (Manaforge Dreadful/Mystic/Venerated/Zenith) must not live here.
+-- Sources: ATT The Venomous Abyss.lua + RCLootCouncil tokenData (12.1).
+-- Armor groups: Woven=cloth, Cured=leather, Cast=mail, Forged=plate.
 local TIER_TOKEN_PIECES = {
-  [249354] = { WARRIOR = 249953, PALADIN = 249962, DEATHKNIGHT = 249971 },
-  [249358] = { WARRIOR = 249952, PALADIN = 249961, DEATHKNIGHT = 249970 },
-  [249362] = { WARRIOR = 249951, PALADIN = 249960, DEATHKNIGHT = 249969 },
-  [249366] = { WARRIOR = 249950, PALADIN = 249959, DEATHKNIGHT = 249968 },
-  [249352] = { ROGUE = 250007, MONK = 250016, DRUID = 250025, DEMONHUNTER = 250034 },
-  [249356] = { ROGUE = 250006, MONK = 250015, DRUID = 250024, DEMONHUNTER = 250033 },
-  [249360] = { ROGUE = 250005, MONK = 250014, DRUID = 250023, DEMONHUNTER = 250032 },
-  [249364] = { ROGUE = 250004, MONK = 250013, DRUID = 250022, DEMONHUNTER = 250031 },
-  [249353] = { HUNTER = 249989, SHAMAN = 249980, EVOKER = 249998 },
-  [249357] = { HUNTER = 249988, SHAMAN = 249979, EVOKER = 249997 },
-  [249361] = { HUNTER = 249987, SHAMAN = 249978, EVOKER = 249996 },
-  [249365] = { HUNTER = 249986, SHAMAN = 249977, EVOKER = 249995 },
-  [249351] = { PRIEST = 250052, MAGE = 250061, WARLOCK = 250043 },
-  [249355] = { PRIEST = 250051, MAGE = 250060, WARLOCK = 250042 },
-  [249359] = { PRIEST = 250050, MAGE = 250059, WARLOCK = 250041 },
-  [249363] = { PRIEST = 250049, MAGE = 250058, WARLOCK = 250040 },
-  [249350] = { WARRIOR = 249955, PALADIN = 249964, DEATHKNIGHT = 249973 },
-  [249348] = { ROGUE = 250009, MONK = 250018, DRUID = 250027, DEMONHUNTER = 250036 },
-  [249349] = { HUNTER = 249991, SHAMAN = 249982, EVOKER = 250000 },
-  [249347] = { PRIEST = 250054, MAGE = 250063, WARLOCK = 250045 },
+  -- Hands (Idol) — Entombed Sentinels
+  [270913] = { WARRIOR = 271457, PALADIN = 271466, DEATHKNIGHT = 271475 }, -- Venomforged Idol
+  [270911] = { ROGUE = 271511, MONK = 271520, DRUID = 271529, DEMONHUNTER = 271538 }, -- Venomcured Idol
+  [270912] = { HUNTER = 271493, SHAMAN = 271484, EVOKER = 271502 }, -- Venomcast Idol (Evoker hands: Ebon Greathorns)
+  [270910] = { PRIEST = 271556, MAGE = 271565, WARLOCK = 271547 }, -- Venomwoven Idol
+  -- Shoulders (Remnant) — The Lost Explorers
+  [270925] = { WARRIOR = 271454, PALADIN = 271463, DEATHKNIGHT = 271472 }, -- Venomforged Remnant
+  [270923] = { ROGUE = 271508, MONK = 271517, DRUID = 271526, DEMONHUNTER = 271535 }, -- Venomcured Remnant
+  [270924] = { HUNTER = 271490, SHAMAN = 271481, EVOKER = 271499 }, -- Venomcast Remnant
+  [270922] = { PRIEST = 271553, MAGE = 271562, WARLOCK = 271544 }, -- Venomwoven Remnant
+  -- Chest (Icon) — Vashnik the Malignant
+  [270929] = { WARRIOR = 271459, PALADIN = 271468, DEATHKNIGHT = 271477 }, -- Venomforged Icon
+  [270927] = { ROGUE = 271513, MONK = 271522, DRUID = 271531, DEMONHUNTER = 271540 }, -- Venomcured Icon
+  [270928] = { HUNTER = 271495, SHAMAN = 271486, EVOKER = 271504 }, -- Venomcast Icon (Evoker chest: Searing Caldera)
+  [270926] = { PRIEST = 271558, MAGE = 271567, WARLOCK = 271549 }, -- Venomwoven Icon
+  -- Legs (Relic) — Sszorak
+  [270921] = { WARRIOR = 271455, PALADIN = 271464, DEATHKNIGHT = 271473 }, -- Venomforged Relic
+  [270919] = { ROGUE = 271509, MONK = 271518, DRUID = 271527, DEMONHUNTER = 271536 }, -- Venomcured Relic
+  [270920] = { HUNTER = 271491, SHAMAN = 271482, EVOKER = 271500 }, -- Venomcast Relic
+  [270918] = { PRIEST = 271554, MAGE = 271563, WARLOCK = 271545 }, -- Venomwoven Relic
+  -- Head (Effigy) — The Twin Fangs
+  [270917] = { WARRIOR = 271456, PALADIN = 271465, DEATHKNIGHT = 271474 }, -- Venomforged Effigy
+  [270915] = { ROGUE = 271510, MONK = 271519, DRUID = 271528, DEMONHUNTER = 271537 }, -- Venomcured Effigy
+  [270916] = { HUNTER = 271492, SHAMAN = 271483, EVOKER = 271501 }, -- Venomcast Effigy
+  [270914] = { PRIEST = 271555, MAGE = 271564, WARLOCK = 271546 }, -- Venomwoven Effigy
 }
 
 local function lookupPieceItemID(tokenItemID, classToken)

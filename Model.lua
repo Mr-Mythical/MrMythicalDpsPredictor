@@ -1,6 +1,5 @@
 local ADDON_NAME, NS = ...
 local Model = NS.Model
-local didWarnComparisonError = false
 
 -- The exported model is immutable for the lifetime of the addon. Bind its hot
 -- fields once so each inference does not repeatedly walk the model tables.
@@ -340,35 +339,6 @@ local function predictWithStats(stats, specKey)
   return forwardModelStats(stats, specKey)
 end
 
-local function getPrimaryStatValue()
-  local specIndex = GetSpecialization()
-  if not specIndex then
-    return 0
-  end
-
-  local _, _, _, _, _, _, primaryStat = GetSpecializationInfo(specIndex)
-  if primaryStat == LE_UNIT_STAT_STRENGTH then
-    local v = UnitStat("player", LE_UNIT_STAT_STRENGTH)
-    return v or 0
-  elseif primaryStat == LE_UNIT_STAT_AGILITY then
-    local v = UnitStat("player", LE_UNIT_STAT_AGILITY)
-    return v or 0
-  end
-
-  local v = UnitStat("player", LE_UNIT_STAT_INTELLECT)
-  return v or 0
-end
-
-local function getPlayerStatVector()
-  return {
-    primary_stat = getPrimaryStatValue(),
-    crit = GetCombatRating(CR_CRIT_MELEE) or 0,
-    haste = GetCombatRating(CR_HASTE_MELEE) or 0,
-    mastery = GetCombatRating(CR_MASTERY) or 0,
-    versatility = GetCombatRating(CR_VERSATILITY_DAMAGE_DONE) or 0,
-  }
-end
-
 local function itemRefToLink(itemRef)
   if type(itemRef) == "table" then
     return itemRef.link or itemRef.itemLink or itemRef.hyperlink
@@ -552,10 +522,14 @@ local ITEM_STATS_CACHE_SIZE = 1024
 local STAT_DELTA_CACHE_SIZE = 2048
 local itemStatsCache = makeBoundedCache(ITEM_STATS_CACHE_SIZE)
 local statDeltaCache = makeBoundedCache(STAT_DELTA_CACHE_SIZE)
+local equippedGearStatsCache = nil
+local equippedGearStatsGeneration = -1
 
 local function clearStatCaches()
   itemStatsCache = makeBoundedCache(ITEM_STATS_CACHE_SIZE)
   statDeltaCache = makeBoundedCache(STAT_DELTA_CACHE_SIZE)
+  equippedGearStatsCache = nil
+  equippedGearStatsGeneration = -1
 end
 
 local function getItemIDFromLink(link)
@@ -595,13 +569,12 @@ local function isItemDataReadyForStats(link)
   return true
 end
 
--- Extract stat deltas using numeric item stat APIs.
--- Optional pairedItemLink supports explicit dual-slot math (e.g. 2H vs MH+OH).
-local function getItemStatDeltas(itemLink, equippedItemLink, pairedItemLink, addPairedStats)
-  if not (C_Item and C_Item.GetItemStatDelta and C_Item.GetItemStats) then
-    return nil, "item stat API unavailable"
-  end
+local statsFromItemLink
 
+-- Extract full permanent-stat deltas, including customizations encoded by
+-- owned item links. Optional pairedItemLink supports explicit dual-slot math
+-- (e.g. 2H vs MH+OH).
+local function getItemStatDeltas(itemLink, equippedItemLink, pairedItemLink, addPairedStats)
   local comparisonLink = itemRefToLink(itemLink)
   local equippedLink = itemRefToLink(equippedItemLink)
   local pairedLink = itemRefToLink(pairedItemLink)
@@ -610,28 +583,22 @@ local function getItemStatDeltas(itemLink, equippedItemLink, pairedItemLink, add
     return nil, "missing item link context"
   end
 
-  local stats = makeZeroStats()
-
-  -- Primary comparison is always explicit: comparison item minus equipped item.
-  local okDelta, statDelta = pcall(C_Item.GetItemStatDelta, comparisonLink, equippedLink)
-  if not okDelta or type(statDelta) ~= "table" then
-    if not didWarnComparisonError then
-      didWarnComparisonError = true
-      NS.brandPrint("GetItemStatDelta failed for compared/equipped links")
-    end
-    return nil, "failed to compute item stat delta"
+  local comparisonStats = statsFromItemLink(comparisonLink)
+  local equippedStats = statsFromItemLink(equippedLink)
+  if not comparisonStats or not equippedStats then
+    return nil, "item stat data not ready"
   end
-  NS.applyItemStatMods(stats, statDelta, 1)
+  local stats = addStats(comparisonStats, equippedStats, -1)
 
-  -- Optional paired item adjustment is explicit numeric math.
+  -- Optional paired item adjustment is explicit full-item stat math.
   -- addPairedStats=true: include paired stats; false/nil: subtract paired stats.
   if pairedLink then
-    local okPaired, pairedStats = pcall(C_Item.GetItemStats, pairedLink)
-    if not okPaired or type(pairedStats) ~= "table" then
-      return nil, "failed to read paired item stats"
+    local pairedStats = statsFromItemLink(pairedLink)
+    if not pairedStats then
+      return nil, "paired item data not ready"
     end
     local pairedSign = (addPairedStats == true) and 1 or -1
-    NS.applyItemStatMods(stats, pairedStats, pairedSign)
+    addStatsInto(stats, stats, pairedStats, pairedSign)
   end
 
   return stats, nil
@@ -647,7 +614,181 @@ NS.statDeltaStats = NS.statDeltaStats or {
   totalMs = 0,
 }
 
-local function statsFromItemLink(link)
+-- Match the model's SimC gear_* input semantics. Live UnitStat /
+-- GetCombatRating values can contain base attributes, raid buffs, and active
+-- procs, so aggregate only permanent stats encoded by equipped item links.
+local EQUIPPED_GEAR_SLOT_IDS = {
+  1, 2, 3, 5, 6, 7, 8, 9, 10,
+  11, 12, 13, 14, 15, 16, 17,
+}
+
+local function getItemCustomizationIDs(itemLink)
+  local payload = type(itemLink) == "string" and itemLink:match("item:([^|]+)") or nil
+  if not payload then
+    return 0, {}
+  end
+  local fields = {}
+  for value in (payload .. ":"):gmatch("(.-):") do
+    fields[#fields + 1] = tonumber(value) or 0
+    if #fields >= 6 then
+      break
+    end
+  end
+  return fields[2] or 0, {
+    fields[3] or 0,
+    fields[4] or 0,
+    fields[5] or 0,
+    fields[6] or 0,
+  }
+end
+
+local function addSocketedGemStats(total, itemLink, gemIDs)
+  for index, gemID in ipairs(gemIDs) do
+    if gemID > 0 then
+      local gemLink
+      if C_Item.GetItemGem then
+        local okGem, _, resolvedLink = pcall(C_Item.GetItemGem, itemLink, index)
+        if okGem then
+          gemLink = resolvedLink
+        end
+      end
+      gemLink = gemLink or ("item:" .. tostring(gemID))
+      if not isItemDataReadyForStats(gemLink) then
+        return false, "socketed gem data is still loading"
+      end
+      local okStats, gemStats = pcall(C_Item.GetItemStats, gemLink)
+      if not okStats or type(gemStats) ~= "table" then
+        return false, "failed to read socketed gem stats"
+      end
+      NS.applyItemStatMods(total, gemStats, 1)
+    end
+  end
+  return true
+end
+
+local function stripTooltipMarkup(text)
+  text = tostring(text or "")
+  text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+  text = text:gsub("|T.-|t", "")
+  return text
+end
+
+local function integerBeforeLabel(text, labelStart)
+  local prefix = text:sub(1, labelStart - 1)
+  local raw = prefix:match("([%+%-]?%d[%d%.,%s]*)%s*$")
+  if not raw then
+    return nil
+  end
+  local sign = raw:find("-", 1, true) and -1 or 1
+  local digits = raw:gsub("%D", "")
+  local value = tonumber(digits)
+  return value and sign * value or nil
+end
+
+local function getItemTooltipData(itemLink, inventorySlot)
+  if C_TooltipInfo and inventorySlot and C_TooltipInfo.GetInventoryItem then
+    local okInventory, inventoryData = pcall(
+      C_TooltipInfo.GetInventoryItem,
+      "player",
+      inventorySlot
+    )
+    if okInventory and type(inventoryData) == "table" then
+      return inventoryData
+    end
+  end
+  if C_TooltipInfo and C_TooltipInfo.GetHyperlink then
+    local okLink, linkData = pcall(C_TooltipInfo.GetHyperlink, itemLink)
+    if okLink and type(linkData) == "table" then
+      return linkData
+    end
+  end
+  return nil
+end
+
+local function addStaticEnchantStats(total, itemLink, inventorySlot, enchantID)
+  if enchantID <= 0 then
+    return true
+  end
+  if not C_TooltipInfo then
+    return false, "item enchant tooltip API unavailable"
+  end
+
+  local tooltipData = getItemTooltipData(itemLink, inventorySlot)
+  if not tooltipData or type(tooltipData.lines) ~= "table" then
+    return false, "item enchant data is still loading"
+  end
+
+  local permanentEnchantType = Enum
+    and Enum.TooltipDataLineType
+    and Enum.TooltipDataLineType.ItemEnchantmentPermanent
+    or 15
+  local activePrimaryKey = NS.getActivePrimaryStatItemKey()
+  local appliedFeatures = {}
+  local foundEnchantLine = false
+  for _, line in ipairs(tooltipData.lines) do
+    if line.type == permanentEnchantType then
+      foundEnchantLine = true
+      local text = stripTooltipMarkup(line.leftText)
+      for statKey, feature in pairs(NS.ITEM_STAT_KEY_TO_FEATURE or {}) do
+        local allowedPrimary = feature ~= "primary_stat"
+          or not activePrimaryKey
+          or statKey == activePrimaryKey
+        local label = _G[statKey]
+        if allowedPrimary and not appliedFeatures[feature] and type(label) == "string" then
+          local labelStart = text:find(label, 1, true)
+          local value = labelStart and integerBeforeLabel(text, labelStart) or nil
+          if value then
+            total[feature] = (total[feature] or 0) + value
+            appliedFeatures[feature] = true
+          end
+        end
+      end
+    end
+  end
+  if not foundEnchantLine then
+    return false, "item enchant data is still loading"
+  end
+  return true
+end
+
+local function getPermanentItemStatVector(itemLink, inventorySlot)
+  if not itemLink then
+    return makeZeroStats()
+  end
+  if not isItemDataReadyForStats(itemLink) then
+    return nil, "item data is still loading"
+  end
+  local ok, statTable = pcall(C_Item.GetItemStats, itemLink)
+  if not ok or type(statTable) ~= "table" then
+    return nil, "failed to read item stats"
+  end
+
+  local stats = makeZeroStats()
+  -- An empty table is valid for an effect-only item once its item data is
+  -- confirmed ready; it contributes no permanent model features.
+  NS.applyItemStatMods(stats, statTable, 1)
+  local enchantID, gemIDs = getItemCustomizationIDs(itemLink)
+  local gemsReady, gemsError = addSocketedGemStats(stats, itemLink, gemIDs)
+  if not gemsReady then
+    return nil, gemsError
+  end
+  local enchantReady, enchantError = addStaticEnchantStats(
+    stats,
+    itemLink,
+    inventorySlot,
+    enchantID
+  )
+  if not enchantReady then
+    return nil, enchantError
+  end
+  return stats
+end
+
+local function getEquippedItemStatVector(inventorySlot, itemLink)
+  return getPermanentItemStatVector(itemLink, inventorySlot)
+end
+
+statsFromItemLink = function(link)
   if not link or not (C_Item and C_Item.GetItemStats) then
     return nil
   end
@@ -657,26 +798,46 @@ local function statsFromItemLink(link)
     return cached
   end
   NS.statDeltaStats.item_stats_misses = (NS.statDeltaStats.item_stats_misses or 0) + 1
-  if not isItemDataReadyForStats(link) then
+  if not NS.getActivePrimaryStatItemKey() then
     return nil
   end
-  local ok, statTable = pcall(C_Item.GetItemStats, link)
-  if not ok or type(statTable) ~= "table" then
-    return nil
-  end
-  local stats = makeZeroStats()
-  NS.applyItemStatMods(stats, statTable, 1)
-  if stats.primary_stat == 0
-    and stats.crit == 0
-    and stats.haste == 0
-    and stats.mastery == 0
-    and stats.versatility == 0 then
-    -- GetItemStats can return an empty table while a synthetic item link is
-    -- still resolving. Do not poison the cache with that transient result.
+  local stats = getPermanentItemStatVector(link)
+  if not stats then
     return nil
   end
   boundedCachePut(itemStatsCache, link, stats)
   return stats
+end
+
+local function getPlayerStatVector()
+  local generation = NS.predictionContextGeneration or 0
+  if equippedGearStatsCache and equippedGearStatsGeneration == generation then
+    return equippedGearStatsCache
+  end
+  if not (C_Item and C_Item.GetItemStats) then
+    return nil, "equipped item stat API unavailable"
+  end
+  if not NS.getActivePrimaryStatItemKey() then
+    return nil, "active specialization data is still loading"
+  end
+
+  local total = makeZeroStats()
+  for _, slotId in ipairs(EQUIPPED_GEAR_SLOT_IDS) do
+    local slotName = NS.SLOT_ID_TO_NAME and NS.SLOT_ID_TO_NAME[slotId]
+    local inventorySlot = slotName and GetInventorySlotInfo(slotName) or slotId
+    local itemLink = inventorySlot and GetInventoryItemLink("player", inventorySlot)
+    if itemLink then
+      local itemStats, itemStatsError = getEquippedItemStatVector(inventorySlot, itemLink)
+      if not itemStats then
+        return nil, itemStatsError
+      end
+      addStatsInto(total, total, itemStats, 1)
+    end
+  end
+
+  equippedGearStatsCache = total
+  equippedGearStatsGeneration = generation
+  return total
 end
 
 local function candidateRefFromCand(cand, slotId)
@@ -700,7 +861,7 @@ local function finishStatDelta(profileStart, value, detail)
   return value, detail
 end
 
--- Unified stat delta: native GetItemStatDelta first, then raw stat subtraction fallback.
+-- Unified full-item stat delta, including encoded gems and static enchants.
 local function computeStatDelta(candRef, eqRef, opts)
   local profileStart
   if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug and debugprofilestop then
@@ -730,9 +891,7 @@ local function computeStatDelta(candRef, eqRef, opts)
   end
   NS.statDeltaStats.cache_misses = (NS.statDeltaStats.cache_misses or 0) + 1
 
-  -- Validate every participating link before trusting either API path. A
-  -- successful API call can still contain empty data while item information is
-  -- loading, and caching that result makes the entire scan consistently wrong.
+  -- Validate every participating link before caching any comparison.
   local candStats = statsFromItemLink(candLink)
   if not candStats then
     return finishStatDelta(profileStart, nil, "candidate item data not ready")
@@ -746,30 +905,22 @@ local function computeStatDelta(candRef, eqRef, opts)
     return finishStatDelta(profileStart, nil, "paired item data not ready")
   end
 
-  if eqLink then
-    local delta = getItemStatDeltas(candLink, eqLink, pairLink, addPaired)
-    if delta then
-      NS.statDeltaStats.native = (NS.statDeltaStats.native or 0) + 1
-      boundedCachePut(statDeltaCache, cacheKey, { delta = delta, source = "native" })
-      return finishStatDelta(profileStart, delta, "native")
-    end
-  end
-
-  NS.statDeltaStats.fallback = (NS.statDeltaStats.fallback or 0) + 1
-  if MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.debug then
-    NS.debugPrint(string.format(
-      "%s: stat delta fallback for %s (native API failed)",
-      NS.BRAND or "MrMythical",
-      candLink:match("item:%d+") or "item"
-    ))
-  end
-
-  local fb = addStatsInto(makeZeroStats(), candStats, eqStats, -1)
+  local delta = addStatsInto(makeZeroStats(), candStats, eqStats, -1)
   if pairLink then
     local sign = (addPaired == true) and 1 or -1
-    addStatsInto(fb, fb, pairStats, sign)
+    addStatsInto(delta, delta, pairStats, sign)
   end
-  return finishStatDelta(profileStart, fb, "fallback")
+  local source
+  if eqLink then
+    -- Preserve the legacy counter names consumed by scan diagnostics.
+    NS.statDeltaStats.native = (NS.statDeltaStats.native or 0) + 1
+    source = "full_item"
+  else
+    NS.statDeltaStats.fallback = (NS.statDeltaStats.fallback or 0) + 1
+    source = "empty_slot"
+  end
+  boundedCachePut(statDeltaCache, cacheKey, { delta = delta, source = source })
+  return finishStatDelta(profileStart, delta, source)
 end
 
 local function resetStatDeltaStats()
@@ -1034,6 +1185,7 @@ NS.getPlayerStatVector = getPlayerStatVector
 NS.getItemStatDeltas = getItemStatDeltas
 NS.computeStatDelta = computeStatDelta
 NS.statsFromItemLink = statsFromItemLink
+NS.getEquippedItemStatVector = getEquippedItemStatVector
 NS.isItemDataReadyForStats = isItemDataReadyForStats
 NS.candidateRefFromCand = candidateRefFromCand
 NS.resetStatDeltaStats = resetStatDeltaStats

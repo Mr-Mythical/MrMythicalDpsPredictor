@@ -195,6 +195,8 @@ local function addUniqueRef(refs, seen, link, meta)
     instance_id = meta.instance_id,
     instance_name = meta.instance_name,
     instance_kind = meta.instance_kind,
+    encounter_id = meta.encounter_id,
+    encounter_name = meta.encounter_name,
     token_item_id = meta.token_item_id,
     token_link = meta.token_link,
     name = itemMeta.name,
@@ -238,7 +240,20 @@ local function isSkippableOtherLoot(info, itemID)
   return not isLikelyTierTokenLoot(info, itemID)
 end
 
-local function tryAddInstanceLootRef(refs, seen, journalLink, info, journalInstanceId, instanceName, resolvedKind, specKey, previewPreset)
+local function resolveEncounterName(encounterId, fallbackName)
+  if fallbackName and fallbackName ~= "" then
+    return fallbackName
+  end
+  if encounterId and EJ_GetEncounterInfo then
+    local name = EJ_GetEncounterInfo(encounterId)
+    if name and name ~= "" then
+      return name
+    end
+  end
+  return nil
+end
+
+local function tryAddInstanceLootRef(refs, seen, journalLink, info, journalInstanceId, instanceName, resolvedKind, specKey, previewPreset, encounterIdOverride, encounterNameOverride)
   if not journalLink or not info or not info.itemID then
     return false, false, nil
   end
@@ -308,16 +323,25 @@ local function tryAddInstanceLootRef(refs, seen, journalLink, info, journalInsta
     if tokenLink then
       sourceLabel = sourceLabel .. " (tier token)"
     end
+    local encounterId = encounterIdOverride or info.encounterID
+    local encounterName = resolveEncounterName(encounterId, encounterNameOverride)
     addUniqueRef(refs, seen, lootLink, {
       source = "loot",
       source_label = sourceLabel,
       instance_id = journalInstanceId,
       instance_name = instanceName,
       instance_kind = resolvedKind,
+      encounter_id = encounterId,
+      encounter_name = encounterName,
       item_id = lootItemID,
       token_item_id = tokenLink and tokenItemID or nil,
       token_link = tokenLink,
-      seen_key = string.format("%d:%d", journalInstanceId, tokenItemID or 0),
+      seen_key = string.format(
+        "%d:%d:%s",
+        journalInstanceId,
+        tokenItemID or 0,
+        tostring(encounterId or "none")
+      ),
     })
     return true, false, nil
   end
@@ -604,83 +628,80 @@ local function namesLikelyMatch(a, b)
   return normA == normB or a == b
 end
 
--- Sporefall uses discrete raid ilvls instead of the standard upgrade track ladder.
-local SPOREFALL_RAID_ILVLS = { 259, 272, 285, 298 }
+-- Tidebound Grotto uses discrete raid ilvls instead of the standard upgrade track ladder.
+local TIDEBOUND_RAID_ILVLS = { 279, 292, 305, 318 }
 
--- Journal instance IDs for Sporefall (locale-independent). Populated from English-name
--- discovery and persisted in MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids.
-local SPOREFALL_JOURNAL_IDS = {
+-- Journal instance IDs for Tidebound Grotto (locale-independent). Populated from English-name
+-- discovery and persisted in MR_MYTHICAL_DPS_CONFIG.tidebound_journal_ids.
+local TIDEBOUND_JOURNAL_IDS = {
   -- Seed known IDs here when confirmed; runtime discovery fills the rest.
 }
 
-local function rememberSporefallJournalId(instanceId)
+local function rememberTideboundJournalId(instanceId)
   instanceId = tonumber(instanceId)
   if not instanceId then
     return
   end
-  SPOREFALL_JOURNAL_IDS[instanceId] = true
+  TIDEBOUND_JOURNAL_IDS[instanceId] = true
   if MR_MYTHICAL_DPS_CONFIG then
-    MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids = MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids or {}
-    MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids[instanceId] = true
+    MR_MYTHICAL_DPS_CONFIG.tidebound_journal_ids = MR_MYTHICAL_DPS_CONFIG.tidebound_journal_ids or {}
+    MR_MYTHICAL_DPS_CONFIG.tidebound_journal_ids[instanceId] = true
   end
 end
 
-local function isKnownSporefallJournalId(instanceId)
+local function isKnownTideboundJournalId(instanceId)
   instanceId = tonumber(instanceId)
   if not instanceId then
     return false
   end
-  if SPOREFALL_JOURNAL_IDS[instanceId] then
+  if TIDEBOUND_JOURNAL_IDS[instanceId] then
     return true
   end
-  local saved = MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.sporefall_journal_ids
+  local saved = MR_MYTHICAL_DPS_CONFIG and MR_MYTHICAL_DPS_CONFIG.tidebound_journal_ids
   return saved and saved[instanceId] and true or false
 end
 
-local function nameLooksLikeSporefall(name)
+local function nameLooksLikeTidebound(name)
   local norm = normalizeInstanceName(name)
-  -- English token (enUS) plus common localized fragments when present in client data.
-  return norm:find("sporefall", 1, true) ~= nil
-    or norm:find("sporenfall", 1, true) ~= nil -- deDE-style
-    or norm:find("chuteedespores", 1, true) ~= nil -- frFR-style guess
+  return norm:find("tidebound", 1, true) ~= nil
 end
 
-local function isSporefallInstance(instanceId, instanceName)
-  if isKnownSporefallJournalId(instanceId) then
+local function isTideboundInstance(instanceId, instanceName)
+  if isKnownTideboundJournalId(instanceId) then
     return true
   end
-  if nameLooksLikeSporefall(instanceName) then
-    rememberSporefallJournalId(instanceId)
+  if nameLooksLikeTidebound(instanceName) then
+    rememberTideboundJournalId(instanceId)
     return true
   end
   if instanceId and EJ_GetInstanceInfo then
     local ejName = select(1, EJ_GetInstanceInfo(instanceId))
-    if nameLooksLikeSporefall(ejName) then
-      rememberSporefallJournalId(instanceId)
+    if nameLooksLikeTidebound(ejName) then
+      rememberTideboundJournalId(instanceId)
       return true
     end
   end
   return false
 end
 
-local function roundUpSporefallIlvl(presetIlvl)
+local function roundUpTideboundIlvl(presetIlvl)
   if not presetIlvl or presetIlvl <= 0 then
     return presetIlvl
   end
-  for _, ilvl in ipairs(SPOREFALL_RAID_ILVLS) do
+  for _, ilvl in ipairs(TIDEBOUND_RAID_ILVLS) do
     if presetIlvl <= ilvl then
       return ilvl
     end
   end
-  return SPOREFALL_RAID_ILVLS[#SPOREFALL_RAID_ILVLS]
+  return TIDEBOUND_RAID_ILVLS[#TIDEBOUND_RAID_ILVLS]
 end
 
 local function getPreviewTargetIlvl(presetIlvl, instanceId, instanceName, instanceKind)
   if not presetIlvl or presetIlvl <= 0 then
     return presetIlvl
   end
-  if instanceKind == "Raid" and isSporefallInstance(instanceId, instanceName) then
-    return roundUpSporefallIlvl(presetIlvl)
+  if instanceKind == "Raid" and isTideboundInstance(instanceId, instanceName) then
+    return roundUpTideboundIlvl(presetIlvl)
   end
   return presetIlvl
 end
@@ -689,16 +710,17 @@ local function getPreviewTargetTrack(previewPreset, instanceId, instanceName, in
   if not previewPreset then
     return nil
   end
-  -- Sporefall uses fixed raid difficulties rather than upgrade-track ranks.
+  -- Tidebound Grotto uses fixed raid difficulties rather than upgrade-track ranks.
   -- Requiring the dropdown track there rejects otherwise-correct raid links.
-  if instanceKind == "Raid" and isSporefallInstance(instanceId, instanceName) then
+  if instanceKind == "Raid" and isTideboundInstance(instanceId, instanceName) then
     return nil
   end
   return previewPreset.track
 end
 
--- Midnight S1 M+ map IDs (fallback when API filters are incomplete).
-local SEASON_CHALLENGE_MAP_IDS = { 402, 558, 560, 559, 556, 239, 161, 557 }
+-- Midnight S2 M+ map IDs (fallback when API filters are incomplete).
+-- IDs from SavedInstances / DBM Keystones (12.1).
+local SEASON_CHALLENGE_MAP_IDS = { 588, 584, 586, 249, 587, 399, 250, 585 }
 
 local function getEjInstanceName(journalId)
   if not journalId or not EJ_GetInstanceInfo then
@@ -888,7 +910,7 @@ function NS.collectEncounterJournalInstances()
       name = name,
       kind = kind,
       mapId = mapId,
-      label = kind .. ": " .. name,
+      label = name,
     })
   end
 
@@ -931,7 +953,7 @@ local function getPlayerPrimaryStatKind()
   if not specIndex then
     return nil
   end
-  local _, _, _, _, _, _, primaryStat = GetSpecializationInfo(specIndex)
+  local _, _, _, _, _, primaryStat = GetSpecializationInfo(specIndex)
   if primaryStat == LE_UNIT_STAT_STRENGTH then
     return "strength"
   end
@@ -1791,8 +1813,8 @@ local function buildDungeonLootPreviewLink(journalLink, itemID, expectedCtx, tar
   return nil
 end
 
-local function isSporefallLoot(instanceKind, instanceId, instanceName)
-  return instanceKind == "Raid" and isSporefallInstance(instanceId, instanceName)
+local function isTideboundLoot(instanceKind, instanceId, instanceName)
+  return instanceKind == "Raid" and isTideboundInstance(instanceId, instanceName)
 end
 
 local function dungeonLootLinkStructurallyValid(link, itemID, targetIlvl, targetTrack, instanceKind, instanceId, instanceName)
@@ -1942,7 +1964,7 @@ end
 getContextValueForIlvl = function(targetIlvl, instanceKind, instanceId, instanceName, targetTrack)
   local enumName
   local kind = instanceKind or "Dungeon"
-  if targetTrack and not isSporefallInstance(instanceId, instanceName) then
+  if targetTrack and not isTideboundInstance(instanceId, instanceName) then
     if kind == "Dungeon" or kind == "Raid" then
       -- Per-rank contexts distinguish Myth 1-6; RaidMythic alone cannot.
       enumName = getPresetDungeonContextEnum(targetTrack)
@@ -1999,7 +2021,7 @@ local function lootPreviewAcceptableForUse(link, itemID, targetIlvl, targetTrack
   if not link or tonumber(link:match("item:(%d+)")) ~= itemID then
     return false
   end
-  if isSporefallLoot(instanceKind, instanceId, instanceName) and not targetTrack then
+  if isTideboundLoot(instanceKind, instanceId, instanceName) and not targetTrack then
     if lootPreviewHasScoringStats(link, itemID) then
       return true
     end
@@ -2024,7 +2046,7 @@ local function apiLootLinkAcceptable(link, itemID, targetIlvl, targetTrack, inst
   if kind == "Dungeon" and targetTrack and linkHasExpectedCrestBonus(link, targetTrack) then
     return true
   end
-  if isSporefallLoot(kind, instanceId, instanceName) and not targetTrack then
+  if isTideboundLoot(kind, instanceId, instanceName) and not targetTrack then
     return lootPreviewAcceptableForUse(link, itemID, targetIlvl, targetTrack, kind, instanceId, instanceName)
   end
   if targetTrack and not lootPreviewLinkMatchesPresetTrack(link, targetTrack) then
@@ -2071,22 +2093,22 @@ local function previewLinkUsableForScoring(link, targetIlvl, targetTrack, itemID
   return false
 end
 
--- Midnight S1 ilvl -> preferred ItemCreationContext (dungeon / raid).
+-- Midnight S2 ilvl -> preferred ItemCreationContext (dungeon / raid).
 local STATIC_DUNGEON_ILVL_CONTEXT = {
-  [246] = "DungeonMythic",
-  [250] = "ChallengeMode_1",
-  [253] = "ChallengeMode_2",
-  [256] = "ChallengeMode_3",
-  [259] = "ChallengeMode_4",
-  [263] = "DungeonBonus_1",
-  [266] = "DungeonBonus_2",
-  [269] = "DungeonBonus_3",
-  [272] = "DungeonBonus_4",
-  [276] = "DungeonBonus_5",
-  [279] = "DungeonBonus_6",
-  [282] = "DungeonBonus_7",
-  [285] = "DungeonBonus_8",
-  [289] = "DungeonBonus_9",
+  [292] = "DungeonMythic",
+  [295] = "ChallengeMode_1",
+  [298] = "ChallengeMode_2",
+  [302] = "ChallengeMode_3",
+  [305] = "ChallengeMode_4",
+  [308] = "DungeonBonus_1",
+  [311] = "DungeonBonus_2",
+  [315] = "DungeonBonus_3",
+  [318] = "DungeonBonus_4",
+  [321] = "DungeonBonus_5",
+  [324] = "DungeonBonus_6",
+  [328] = "DungeonBonus_7",
+  [331] = "DungeonBonus_8",
+  [334] = "DungeonBonus_9",
 }
 
 -- Shared ilvls map to different creation contexts depending on track.
@@ -2128,34 +2150,35 @@ getPresetDungeonContextEnum = function(targetTrack)
 end
 
 local STATIC_RAID_ILVL_CONTEXT = {
-  [246] = "RaidNormal",
-  [250] = "RaidNormal",
-  [253] = "RaidNormal",
-  [256] = "RaidNormal",
-  [259] = "RaidNormal",
-  [263] = "RaidHeroic",
-  [266] = "RaidHeroic",
-  [269] = "RaidHeroic",
-  [272] = "RaidMythic",
-  [276] = "RaidMythic",
-  [279] = "RaidMythic",
-  [282] = "RaidMythic",
-  [285] = "RaidMythic",
-  [289] = "RaidMythic",
+  [292] = "RaidNormal",
+  [295] = "RaidNormal",
+  [298] = "RaidNormal",
+  [302] = "RaidNormal",
+  [305] = "RaidNormal",
+  [308] = "RaidHeroic",
+  [311] = "RaidHeroic",
+  [315] = "RaidHeroic",
+  [318] = "RaidMythic",
+  [321] = "RaidMythic",
+  [324] = "RaidMythic",
+  [328] = "RaidMythic",
+  [331] = "RaidMythic",
+  [334] = "RaidMythic",
 }
 
-local STATIC_SPOREFALL_ILVL_CONTEXT = {
-  [259] = "RaidNormal",
-  [272] = "RaidMythic",
-  [285] = "RaidMythic",
-  [298] = "RaidMythic",
+-- Tidebound Grotto lair: discrete difficulty ilvls (LFR / Normal / Heroic / Mythic).
+local STATIC_TIDEBOUND_ILVL_CONTEXT = {
+  [279] = "RaidFinder",
+  [292] = "RaidNormal",
+  [305] = "RaidHeroic",
+  [318] = "RaidMythic",
 }
 
--- Midnight S1 upgrade track item levels (ranks 1/6 through 6/6).
+-- Midnight S2 upgrade track item levels (ranks 1/6 through 6/6).
 local UPGRADE_TRACK_ILVLS = {
-  Champion = { 246, 250, 253, 256, 259, 263 },
-  Hero = { 259, 263, 266, 269, 272, 276 },
-  Myth = { 272, 276, 279, 282, 285, 289 },
+  Champion = { 292, 295, 298, 302, 305, 308 },
+  Hero = { 305, 308, 311, 315, 318, 321 },
+  Myth = { 318, 321, 324, 328, 331, 334 },
 }
 
 local UPGRADE_TRACK_ORDER = { "Champion", "Hero", "Myth" }
@@ -2201,8 +2224,8 @@ CONTEXT_ENUM_FALLBACK = {
 }
 
 getStaticContextForIlvl = function(targetIlvl, instanceKind, instanceId, instanceName)
-  if instanceKind == "Raid" and isSporefallInstance(instanceId, instanceName) then
-    return STATIC_SPOREFALL_ILVL_CONTEXT[targetIlvl]
+  if instanceKind == "Raid" and isTideboundInstance(instanceId, instanceName) then
+    return STATIC_TIDEBOUND_ILVL_CONTEXT[targetIlvl]
   end
   local map = instanceKind == "Raid" and STATIC_RAID_ILVL_CONTEXT or STATIC_DUNGEON_ILVL_CONTEXT
   return map[targetIlvl]
@@ -2232,7 +2255,7 @@ local function previewLinkCacheKey(itemID, targetIlvl, targetTrack, instanceKind
     targetIlvl or 0,
     kind,
     targetTrack or "",
-    isSporefallInstance(instanceId, instanceName) and "sf" or "std"
+    isTideboundInstance(instanceId, instanceName) and "tb" or "std"
   )
 end
 
@@ -2306,7 +2329,7 @@ local function resolveApiLootPreviewLink(itemID, targetIlvl, targetTrack, instan
   end
   local apiLink = getPreviewLinkForContext(itemID, expectedCtx, contextEnumName)
 
-  if isSporefallLoot(kind, instanceId, instanceName) and not targetTrack then
+  if isTideboundLoot(kind, instanceId, instanceName) and not targetTrack then
     local baseLink = apiLink or journalLink or getBareItemLink(itemID)
     if baseLink then
       local built = applyPresetUpgradeEncoding(baseLink, expectedCtx, nil)
@@ -2734,7 +2757,7 @@ local function collectLootRefsForInstance(journalInstanceId, globalSeen, expecte
     end
   end
 
-  local function appendLootAtIndex(i)
+  local function appendLootAtIndex(i, encounterIdOverride, encounterNameOverride)
     local info = getLootInfoByIndex(i)
     if not info or not info.itemID then
       return
@@ -2752,7 +2775,17 @@ local function collectLootRefsForInstance(journalInstanceId, globalSeen, expecte
       return
     end
     local added, pending, pendingIds = tryAddInstanceLootRef(
-      refs, seen, journalLink, info, journalInstanceId, instanceName, resolvedKind, specKey, previewPreset
+      refs,
+      seen,
+      journalLink,
+      info,
+      journalInstanceId,
+      instanceName,
+      resolvedKind,
+      specKey,
+      previewPreset,
+      encounterIdOverride,
+      encounterNameOverride
     )
     if not added and pending then
       local ids = pendingIds or { info.itemID }
@@ -2766,17 +2799,18 @@ local function collectLootRefsForInstance(journalInstanceId, globalSeen, expecte
     end
   end
 
-  local function collectLootForCurrentSelection()
+  local function collectLootForCurrentSelection(encounterIdOverride, encounterNameOverride)
     local numLoot = EJ_GetNumLoot() or 0
     for i = 1, numLoot do
-      appendLootAtIndex(i)
+      appendLootAtIndex(i, encounterIdOverride, encounterNameOverride)
     end
     return numLoot
   end
 
-  local totalLootEntries = collectLootForCurrentSelection()
-
-  if totalLootEntries == 0 and EJ_GetEncounterInfoByIndex and EJ_SelectEncounter then
+  -- Prefer per-encounter collection so farm priority can group by boss.
+  local totalLootEntries = 0
+  local collectedViaEncounters = false
+  if EJ_GetEncounterInfoByIndex and EJ_SelectEncounter then
     local encIndex = 1
     while true do
       local encName, _, encID = EJ_GetEncounterInfoByIndex(encIndex)
@@ -2784,10 +2818,18 @@ local function collectLootRefsForInstance(journalInstanceId, globalSeen, expecte
         break
       end
       EJ_SelectEncounter(encID)
-      totalLootEntries = totalLootEntries + collectLootForCurrentSelection()
+      local n = collectLootForCurrentSelection(encID, encName)
+      if n > 0 then
+        collectedViaEncounters = true
+      end
+      totalLootEntries = totalLootEntries + n
       encIndex = encIndex + 1
     end
     EJ_SelectInstance(journalInstanceId)
+  end
+
+  if not collectedViaEncounters then
+    totalLootEntries = collectLootForCurrentSelection(nil, nil)
   end
 
   if totalLootEntries == 0 and (#refs == 0) and not (meta.pending_item_ids and #meta.pending_item_ids > 0) then
@@ -4193,6 +4235,9 @@ local function scoreOneGearRef(session, ref)
         preview = ref.preview,
         instance_id = ref.instance_id,
         instance_name = ref.instance_name,
+        instance_kind = ref.instance_kind,
+        encounter_id = ref.encounter_id,
+        encounter_name = ref.encounter_name,
         dps_base = best.dps_base,
         dps_new = best.dps_new,
         dps_delta = best.dps_delta,

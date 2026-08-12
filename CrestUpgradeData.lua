@@ -3,80 +3,84 @@ local ADDON_NAME, NS = ...
 NS.CREST_UPGRADE_COST_AMOUNT = 20
 NS.CREST_ACCOUNT_DISCOUNT_MULTIPLIER = 0.5
 
-NS.CREST_CURRENCY_IDS = { 3383, 3341, 3343, 3345, 3347 }
+-- Midnight Season 2 Mistcrests (SimC / ATT / SavedInstances: 3442-3446).
+NS.CREST_CURRENCY_IDS = { 3442, 3443, 3444, 3445, 3446 }
 
 NS.CREST_CURRENCY_ID_SET = {
-  [3383] = true,
-  [3341] = true,
-  [3343] = true,
-  [3345] = true,
-  [3347] = true,
+  [3442] = true, -- Adventurer Mistcrest
+  [3443] = true, -- Veteran Mistcrest
+  [3444] = true, -- Champion Mistcrest
+  [3445] = true, -- Hero Mistcrest
+  [3446] = true, -- Myth Mistcrest
 }
 
--- Bonus IDs used by Midnight crest upgrade tracks (for link parsing only).
-local CREST_BONUS_ID_MIN = 12769
-local CREST_BONUS_ID_MAX = 12806
+-- Bonus IDs used by Midnight Season 2 Mistcrest upgrade tracks (for link parsing only).
+-- Verified via Wowhead PTR tooltips on 12.1 (bonus → Upgrade Level + ilvl).
+local CREST_BONUS_ID_MIN = 12817
+local CREST_BONUS_ID_MAX = 12854
 
 -- trackStringID -> { currencyId, maxLevel, ranks[level] = { itemLevel, bonusId, rank } }
+-- Track string IDs reused from Midnight S1 (ATT UPGRADETRACKS still maps Champion=973 etc.).
+-- Bonus IDs + Mistcrest currencies + ilvl ladder are Season 2.
 local MIDNIGHT_CREST_TRACKS = {
   [971] = {
-    currencyId = 3383,
+    currencyId = 3442,
     maxLevel = 6,
     ranks = {
-      [1] = { itemLevel = 220, bonusId = 12769, rank = 2 },
-      [2] = { itemLevel = 224, bonusId = 12770, rank = 2 },
-      [3] = { itemLevel = 227, bonusId = 12771, rank = 2 },
-      [4] = { itemLevel = 230, bonusId = 12772, rank = 2 },
-      [5] = { itemLevel = 233, bonusId = 12773, rank = 2 },
-      [6] = { itemLevel = 237, bonusId = 12774, rank = 2 },
+      [1] = { itemLevel = 266, bonusId = 12817, rank = 2 },
+      [2] = { itemLevel = 269, bonusId = 12818, rank = 2 },
+      [3] = { itemLevel = 272, bonusId = 12819, rank = 2 },
+      [4] = { itemLevel = 276, bonusId = 12820, rank = 2 },
+      [5] = { itemLevel = 279, bonusId = 12821, rank = 2 },
+      [6] = { itemLevel = 282, bonusId = 12822, rank = 2 },
     },
   },
   [972] = {
-    currencyId = 3341,
+    currencyId = 3443,
     maxLevel = 6,
     ranks = {
-      [1] = { itemLevel = 233, bonusId = 12777, rank = 3 },
-      [2] = { itemLevel = 237, bonusId = 12778, rank = 3 },
-      [3] = { itemLevel = 240, bonusId = 12779, rank = 3 },
-      [4] = { itemLevel = 243, bonusId = 12780, rank = 3 },
-      [5] = { itemLevel = 246, bonusId = 12781, rank = 3 },
-      [6] = { itemLevel = 250, bonusId = 12782, rank = 3 },
+      [1] = { itemLevel = 279, bonusId = 12825, rank = 3 },
+      [2] = { itemLevel = 282, bonusId = 12826, rank = 3 },
+      [3] = { itemLevel = 285, bonusId = 12827, rank = 3 },
+      [4] = { itemLevel = 289, bonusId = 12828, rank = 3 },
+      [5] = { itemLevel = 292, bonusId = 12829, rank = 3 },
+      [6] = { itemLevel = 295, bonusId = 12830, rank = 3 },
     },
   },
   [973] = {
-    currencyId = 3343,
+    currencyId = 3444,
     maxLevel = 6,
     ranks = {
-      [1] = { itemLevel = 246, bonusId = 12785, rank = 4 },
-      [2] = { itemLevel = 250, bonusId = 12786, rank = 4 },
-      [3] = { itemLevel = 253, bonusId = 12787, rank = 4 },
-      [4] = { itemLevel = 256, bonusId = 12788, rank = 4 },
-      [5] = { itemLevel = 259, bonusId = 12789, rank = 4 },
-      [6] = { itemLevel = 263, bonusId = 12790, rank = 4 },
+      [1] = { itemLevel = 292, bonusId = 12833, rank = 4 },
+      [2] = { itemLevel = 295, bonusId = 12834, rank = 4 },
+      [3] = { itemLevel = 298, bonusId = 12835, rank = 4 },
+      [4] = { itemLevel = 302, bonusId = 12836, rank = 4 },
+      [5] = { itemLevel = 305, bonusId = 12837, rank = 4 },
+      [6] = { itemLevel = 308, bonusId = 12838, rank = 4 },
     },
   },
   [974] = {
-    currencyId = 3345,
+    currencyId = 3445,
     maxLevel = 6,
     ranks = {
-      [1] = { itemLevel = 259, bonusId = 12793, rank = 5 },
-      [2] = { itemLevel = 263, bonusId = 12794, rank = 5 },
-      [3] = { itemLevel = 266, bonusId = 12795, rank = 5 },
-      [4] = { itemLevel = 269, bonusId = 12796, rank = 5 },
-      [5] = { itemLevel = 272, bonusId = 12797, rank = 5 },
-      [6] = { itemLevel = 276, bonusId = 12798, rank = 5 },
+      [1] = { itemLevel = 305, bonusId = 12841, rank = 5 },
+      [2] = { itemLevel = 308, bonusId = 12842, rank = 5 },
+      [3] = { itemLevel = 311, bonusId = 12843, rank = 5 },
+      [4] = { itemLevel = 315, bonusId = 12844, rank = 5 },
+      [5] = { itemLevel = 318, bonusId = 12845, rank = 5 },
+      [6] = { itemLevel = 321, bonusId = 12846, rank = 5 },
     },
   },
   [978] = {
-    currencyId = 3347,
+    currencyId = 3446,
     maxLevel = 6,
     ranks = {
-      [1] = { itemLevel = 272, bonusId = 12801, rank = 6 },
-      [2] = { itemLevel = 276, bonusId = 12802, rank = 6 },
-      [3] = { itemLevel = 279, bonusId = 12803, rank = 6 },
-      [4] = { itemLevel = 282, bonusId = 12804, rank = 6 },
-      [5] = { itemLevel = 285, bonusId = 12805, rank = 6 },
-      [6] = { itemLevel = 289, bonusId = 12806, rank = 6 },
+      [1] = { itemLevel = 318, bonusId = 12849, rank = 6 },
+      [2] = { itemLevel = 321, bonusId = 12850, rank = 6 },
+      [3] = { itemLevel = 324, bonusId = 12851, rank = 6 },
+      [4] = { itemLevel = 328, bonusId = 12852, rank = 6 },
+      [5] = { itemLevel = 331, bonusId = 12853, rank = 6 },
+      [6] = { itemLevel = 334, bonusId = 12854, rank = 6 },
     },
   },
 }

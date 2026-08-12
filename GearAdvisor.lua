@@ -15,6 +15,7 @@ local loadoutRows = {}
 local loadoutSummary = nil
 local candidatesBySlot = nil
 local flatRefs = nil
+local farmRanks = {}
 local scanComplete = false
 local estimatedCombinations = nil
 local comboEstimateRunner = nil
@@ -46,6 +47,7 @@ local GA_HEIGHT = 700
 local GA_PADDING = 10
 local GA_SCROLL_INSET = 42
 local GA_ACTION_H = 40
+local GA_FILTER_ROW_H = 28
 local GA_STATUS_H = 22
 local GA_HEADER_H = 18
 local GA_LOADOUT_CURRENT_X = 100
@@ -64,6 +66,20 @@ local GA_CREST_COST_RIGHT = GA_CREST_DPS_RIGHT + GA_CREST_DPS_WIDTH + GA_CREST_C
 local LOOT_COLLECT_BATCH = 2
 
 local function setupAdvisorCheckbox(check, label, allowWrap)
+  if check.SetLabel then
+    check:SetLabel(label)
+    if check.Label then
+      check.Label:ClearAllPoints()
+      local box = check.BoxBorder or check
+      check.Label:SetPoint("LEFT", box, "RIGHT", 6, 0)
+      check.Label:SetPoint("RIGHT", check, "RIGHT", 0, 0)
+      check.Label:SetJustifyH("LEFT")
+      check.Label:SetWordWrap(allowWrap == true)
+      check.Label:SetNonSpaceWrap(allowWrap == true)
+    end
+    check.text = check.Label
+    return
+  end
   check:SetSize(24, 24)
   local text = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   text:SetPoint("LEFT", check, "RIGHT", 4, 0)
@@ -80,6 +96,91 @@ local function setupAdvisorCheckbox(check, label, allowWrap)
     text:SetJustifyV("MIDDLE")
   end
   check.text = text
+end
+
+local function layoutUpgradeFilterChecks()
+  if not advisorFrame or not advisorFrame.upgradeFilterFrame then
+    return
+  end
+  local frame = advisorFrame.upgradeFilterFrame
+  if not frame:IsShown() then
+    return
+  end
+  frame:SetHeight(GA_FILTER_ROW_H)
+
+  local upgradesOnly = advisorFrame.upgradesOnlyCheck
+  local sidegrade = advisorFrame.sidegradeCheck
+  if upgradesOnly then
+    upgradesOnly:ClearAllPoints()
+    upgradesOnly:SetPoint("LEFT", frame, "LEFT", 10, 0)
+    upgradesOnly:SetSize(150, 22)
+    if upgradesOnly.Label then
+      upgradesOnly.Label:ClearAllPoints()
+      local box = upgradesOnly.BoxBorder or upgradesOnly
+      upgradesOnly.Label:SetPoint("LEFT", box, "RIGHT", 6, 0)
+      upgradesOnly.Label:SetPoint("RIGHT", upgradesOnly, "RIGHT", -2, 0)
+      upgradesOnly.Label:SetJustifyH("LEFT")
+      upgradesOnly.Label:SetWordWrap(false)
+    end
+  end
+  if sidegrade then
+    sidegrade:ClearAllPoints()
+    if upgradesOnly then
+      sidegrade:SetPoint("LEFT", upgradesOnly, "RIGHT", 18, 0)
+    else
+      sidegrade:SetPoint("LEFT", frame, "LEFT", 10, 0)
+    end
+    sidegrade:SetSize(180, 22)
+    if sidegrade.Label then
+      sidegrade.Label:ClearAllPoints()
+      local box = sidegrade.BoxBorder or sidegrade
+      sidegrade.Label:SetPoint("LEFT", box, "RIGHT", 6, 0)
+      sidegrade.Label:SetPoint("RIGHT", sidegrade, "RIGHT", -2, 0)
+      sidegrade.Label:SetJustifyH("LEFT")
+      sidegrade.Label:SetWordWrap(false)
+    end
+  end
+end
+
+local function layoutAdvisorChrome()
+  if not advisorFrame then
+    return
+  end
+  local actionBar = advisorFrame.actionBar
+  local filterRow = advisorFrame.upgradeFilterFrame
+  local farmBar = advisorFrame.farmControlsBar
+  local header = advisorFrame.headerFrame
+  if not actionBar or not header then
+    return
+  end
+
+  local showFilters = filterRow and filterRow:IsShown()
+  local showFarm = farmBar and farmBar:IsShown()
+
+  if farmBar then
+    farmBar:ClearAllPoints()
+    farmBar:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
+    farmBar:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
+    farmBar:SetHeight(GA_FILTER_ROW_H)
+  end
+
+  if filterRow then
+    filterRow:ClearAllPoints()
+    filterRow:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
+    filterRow:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
+    filterRow:SetHeight(GA_FILTER_ROW_H)
+  end
+
+  header:ClearAllPoints()
+  header:SetPoint("LEFT", advisorFrame, "LEFT", GA_PADDING, 0)
+  header:SetPoint("RIGHT", advisorFrame, "RIGHT", -GA_SCROLL_INSET, 0)
+  if showFarm and farmBar then
+    header:SetPoint("TOP", farmBar, "BOTTOM", 0, -2)
+  elseif showFilters and filterRow then
+    header:SetPoint("TOP", filterRow, "BOTTOM", 0, -2)
+  else
+    header:SetPoint("TOP", actionBar, "BOTTOM", 0, -2)
+  end
 end
 
 local GA_ICON_SIZE = 32
@@ -123,6 +224,55 @@ local function buildCandidateTooltipExtraLines(cand, iconInfo, isVault, isVaultW
   return lines
 end
 
+local function getLootViewMode()
+  if MR_MYTHICAL_DPS_CONFIG.gear_advisor_loot_view == "slots" then
+    return "slots"
+  end
+  return "farm"
+end
+
+local function getFarmSortKey()
+  local key = MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_sort
+  if NS.normalizeFarmSortKey then
+    return NS.normalizeFarmSortKey(key)
+  end
+  if key == "best" or key == "name" or key == "ev" then
+    return key
+  end
+  return "ev"
+end
+
+local function isFarmGroupByInstance()
+  return MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_group_by_instance == true
+end
+
+local isShowingLoadoutResults
+
+local function isLootFarmView()
+  return currentMode == "loot"
+    and getLootViewMode() == "farm"
+    and scanComplete
+    and not isShowingLoadoutResults()
+end
+
+local function rebuildFarmRanks()
+  farmRanks = {}
+  if not candidatesBySlot or not NS.rankLootFarmPriorityFromSlotMap then
+    return
+  end
+  local all = NS.rankLootFarmPriorityFromSlotMap(candidatesBySlot, { respect_selection = true })
+  if NS.filterFarmPriorityRanks then
+    farmRanks = NS.filterFarmPriorityRanks(all)
+  else
+    farmRanks = all
+  end
+end
+
+local syncLootViewTabs
+local syncFarmControls
+local setLootViewMode
+local setFarmSortKey
+local setFarmGroupByInstance
 local MODE_TABS = {
   { id = "bags", label = "Bags" },
   { id = "loot", label = "Dungeons & Raids" },
@@ -158,6 +308,7 @@ local function resetLoadoutScanState()
   candidateRows = {}
   candidatesBySlot = nil
   flatRefs = nil
+  farmRanks = {}
   statusNote = nil
   loadoutVaultWinnerKey = nil
   lastLoadoutScanOptsKey = nil
@@ -203,6 +354,7 @@ local function saveModeScanSnapshot(modeId)
       flatRefs = flatRefs,
       upgradeRows = upgradeRows,
       candidateRows = candidateRows,
+      farmRanks = farmRanks,
       loadoutSummary = loadoutSummary,
       loadoutRows = loadoutRows,
       loadoutVaultWinnerKey = loadoutVaultWinnerKey,
@@ -233,6 +385,7 @@ local function restoreModeScanSnapshot(modeId)
   flatRefs = snap.flatRefs
   upgradeRows = snap.upgradeRows or {}
   candidateRows = snap.candidateRows or {}
+  farmRanks = snap.farmRanks or {}
   loadoutSummary = snap.loadoutSummary
   loadoutRows = snap.loadoutRows or {}
   loadoutVaultWinnerKey = snap.loadoutVaultWinnerKey
@@ -401,7 +554,6 @@ local syncScanProgressModeButton = function()
 end
 local syncActionButtons
 local renderAdvisorRows
-local isShowingLoadoutResults
 local applyPostScanStatus
 
 isAdvisorScanActive = function()
@@ -581,21 +733,26 @@ local function syncModeTabs()
         break
       end
     end
-    if modeScanCacheHasResults(modeId) and modeId ~= currentMode then
-      btn.text:SetText(label .. " •")
-    else
-      btn.text:SetText(label)
+    local textLabel = (modeScanCacheHasResults(modeId) and modeId ~= currentMode) and (label .. " •") or label
+    if btn.text then
+      btn.text:SetText(textLabel)
+    elseif btn.SetLabel then
+      btn:SetLabel(textLabel)
     end
-    if modeId == currentMode then
-      btn:SetBackdropColor(0.22, 0.24, 0.32, 1)
-      btn.text:SetTextColor(1, 0.92, 0.55)
-    else
-      btn:SetBackdropColor(0.14, 0.14, 0.18, 0.9)
-      btn.text:SetTextColor(0.75, 0.78, 0.85)
+    if btn.SetSelected then
+      btn:SetSelected(modeId == currentMode)
+    elseif btn.SetBackdropColor and btn.text then
+      if modeId == currentMode then
+        btn:SetBackdropColor(0.22, 0.24, 0.32, 1)
+        btn.text:SetTextColor(1, 0.92, 0.55)
+      else
+        btn:SetBackdropColor(0.14, 0.14, 0.18, 0.9)
+        btn.text:SetTextColor(0.75, 0.78, 0.85)
+      end
     end
     if tabsLocked then
       btn:Disable()
-      if modeId ~= currentMode then
+      if modeId ~= currentMode and btn.text then
         btn.text:SetTextColor(0.45, 0.48, 0.52)
       end
     else
@@ -658,24 +815,93 @@ local function refreshCrestChrome()
   end
 end
 
+local function syncActionBarHeight()
+  if not advisorFrame or not advisorFrame.actionBar then
+    return
+  end
+  advisorFrame.actionBar:SetHeight(GA_ACTION_H)
+  layoutAdvisorChrome()
+end
+
+local function layoutFarmControlsRow()
+  if not advisorFrame or not advisorFrame.farmControlsBar then
+    return
+  end
+  local bar = advisorFrame.farmControlsBar
+  if not bar:IsShown() then
+    return
+  end
+  local groupCheck = advisorFrame.farmGroupCheck
+  local sortDropdown = advisorFrame.farmSortDropdown
+  if groupCheck then
+    groupCheck:ClearAllPoints()
+    groupCheck:SetPoint("LEFT", bar, "LEFT", 10, 0)
+    groupCheck:SetSize(160, 22)
+    if groupCheck.Label then
+      groupCheck.Label:ClearAllPoints()
+      local box = groupCheck.BoxBorder or groupCheck
+      groupCheck.Label:SetPoint("LEFT", box, "RIGHT", 6, 0)
+      groupCheck.Label:SetPoint("RIGHT", groupCheck, "RIGHT", -2, 0)
+      groupCheck.Label:SetJustifyH("LEFT")
+      groupCheck.Label:SetWordWrap(false)
+    end
+  end
+  if sortDropdown then
+    sortDropdown:ClearAllPoints()
+    if groupCheck then
+      sortDropdown:SetPoint("LEFT", groupCheck, "RIGHT", 12, 0)
+    else
+      sortDropdown:SetPoint("LEFT", bar, "LEFT", 10, 0)
+    end
+  end
+end
+
+local function layoutLootActionBar()
+  if not advisorFrame or not advisorFrame.actionBar then
+    return
+  end
+  local actionBar = advisorFrame.actionBar
+  local lootViewBar = advisorFrame.lootViewBar
+  local findBtn = advisorFrame.findLoadoutBtn
+  local showLootTabs = lootViewBar and lootViewBar:IsShown()
+
+  if showLootTabs then
+    lootViewBar:ClearAllPoints()
+    lootViewBar:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
+  end
+
+  if findBtn and findBtn:IsShown() then
+    findBtn:ClearAllPoints()
+    if showLootTabs then
+      findBtn:SetPoint("LEFT", lootViewBar, "RIGHT", 10, 0)
+    else
+      findBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
+    end
+  end
+
+  layoutFarmControlsRow()
+  layoutUpgradeFilterChecks()
+  layoutAdvisorChrome()
+end
+
 syncCrestFilterControls = function()
   if not advisorFrame then return end
   local crestMode = currentMode == "crests"
   if advisorFrame.crestFilterFrame then
     advisorFrame.crestFilterFrame:SetShown(crestMode and not isAdvisorScanActive())
   end
-  if advisorFrame.actionBar then
-    advisorFrame.actionBar:SetHeight(GA_ACTION_H)
-  end
+  syncActionBarHeight()
   refreshCrestChrome()
 end
 
 syncUpgradeFilterControls = function()
   if not advisorFrame then return end
   if advisorFrame.upgradeFilterFrame then
+    local farmView = currentMode == "loot" and getLootViewMode() == "farm"
     advisorFrame.upgradeFilterFrame:SetShown(
       isLoadoutMode() and currentMode ~= "crests"
       and not isShowingLoadoutResults() and not isAdvisorScanActive()
+      and not farmView
     )
   end
   local upgradesOn = MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only == true
@@ -687,6 +913,8 @@ syncUpgradeFilterControls = function()
     end
     advisorFrame.sidegradeCheck.text:SetTextColor(r, g, b)
   end
+  syncActionBarHeight()
+  layoutUpgradeFilterChecks()
 end
 
 local function onUpgradeFilterChanged()
@@ -742,17 +970,22 @@ syncLootControls = function()
     return
   end
   local showLoot = currentMode == "loot"
+  local farmView = showLoot and getLootViewMode() == "farm"
   if advisorFrame.instanceDropdown then advisorFrame.instanceDropdown:SetShown(showLoot) end
   if advisorFrame.ilvlDropdown then advisorFrame.ilvlDropdown:SetShown(showLoot) end
-  if advisorFrame.lootHint then advisorFrame.lootHint:SetShown(showLoot) end
+  if advisorFrame.lootHint then
+    advisorFrame.lootHint:SetShown(showLoot and not farmView)
+  end
 end
 
 syncScanPerfControls = function()
   if not advisorFrame then return end
 
   local loadoutSearch = isLoadoutSearchActive()
+  local farmView = currentMode == "loot" and getLootViewMode() == "farm"
   local showPerfDropdown = isLoadoutMode() and currentMode ~= "crests"
     and scanComplete and not isAdvisorScanActive()
+    and not farmView
   local showPerfToggle = loadoutSearch
   local perfDropdown = advisorFrame.perfDropdown
   local perfToggleBtn = advisorFrame.perfToggleBtn
@@ -761,7 +994,14 @@ syncScanPerfControls = function()
   if perfDropdown then
     perfDropdown:SetShown(showPerfDropdown)
     if showPerfDropdown then
-      UIDropDownMenu_SetText(perfDropdown, NS.getScanPerformanceDropdownLabel())
+      if perfDropdown.SetValue then
+        perfDropdown:SetValue(NS.getScanPerformanceMode(), true)
+        if perfDropdown.Button and perfDropdown.Button.SetLabel then
+          perfDropdown.Button:SetLabel(NS.getScanPerformanceDropdownLabel())
+        end
+      else
+        UIDropDownMenu_SetText(perfDropdown, NS.getScanPerformanceDropdownLabel())
+      end
       perfControl = perfDropdown
     end
   end
@@ -799,22 +1039,19 @@ syncScanPerfControls = function()
     end
   end
   if showLoot and advisorFrame.lootHint then
-    advisorFrame.lootHint:ClearAllPoints()
-    local leftAnchor = (showPerfControls and perfControl and perfControl:IsShown()) and perfControl or ilvlDropdown
-    if leftAnchor then
-      advisorFrame.lootHint:SetPoint("RIGHT", leftAnchor, "LEFT", -8, 0)
+    -- Farm view uses the farm controls strip; keep lootHint for BiS Scan only.
+    local showHint = not farmView and not (advisorFrame.farmControlsBar and advisorFrame.farmControlsBar:IsShown())
+    advisorFrame.lootHint:SetShown(showHint)
+    if showHint then
+      advisorFrame.lootHint:ClearAllPoints()
+      local leftAnchor = (showPerfControls and perfControl and perfControl:IsShown()) and perfControl or ilvlDropdown
+      if leftAnchor then
+        advisorFrame.lootHint:SetPoint("RIGHT", leftAnchor, "LEFT", -8, 0)
+      end
     end
   end
-  if upgradeFilterFrame and findLoadoutBtn and upgradeFilterFrame:IsShown() then
-    upgradeFilterFrame:ClearAllPoints()
-    upgradeFilterFrame:SetPoint("TOPLEFT", findLoadoutBtn, "TOPRIGHT", 12, 0)
-    if showPerfControls and perfControl and perfControl:IsShown() then
-      upgradeFilterFrame:SetPoint("TOPRIGHT", perfControl, "TOPLEFT", -12, 0)
-    else
-      upgradeFilterFrame:SetPoint("RIGHT", actionBar, "RIGHT", -140, 0)
-    end
-    upgradeFilterFrame:SetHeight(56)
-  end
+  syncActionBarHeight()
+  layoutLootActionBar()
 end
 
 toggleAdvisorScanPerformance = function()
@@ -882,7 +1119,7 @@ end
 
 local function getActiveScanTypeLabel()
   if scanComplete and isLoadoutMode() and isAdvisorScanActive() then
-    return "Find Loadout"
+    return NS.MSG_RUN_SCAN or "Run Scan"
   end
   for _, mode in ipairs(MODE_TABS) do
     if mode.id == currentMode then
@@ -1000,6 +1237,9 @@ refreshLoadoutComboEstimate = function()
 end
 
 local function formatPostScanStatus()
+  if currentMode == "loot" and getLootViewMode() == "farm" then
+    return NS.MSG_FARM_PRIORITY_HINT or "Boss EV from single-swap estimates.", false
+  end
   local scoredCount = #upgradeRows
   local selectedAltCount = countSelectedAlternatives()
   local vaultNote = ""
@@ -1421,15 +1661,27 @@ local function syncAdvisorListHeader()
     end
     metricHdr:Show()
   elseif isLoadoutMode() then
-    slotHdr:SetText("Slot")
-    slotHdr:Show()
-    detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_ICONS_COL_X, 0)
-    if currentMode == "bags" and NS.isGreatVaultFrameOpen() then
-      detailHdr:SetText("Equipped and alternatives (purple border = vault)")
+    if isLootFarmView() then
+      slotHdr:SetText("#")
+      slotHdr:Show()
+      detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_ICONS_COL_X, 0)
+      detailHdr:SetText("Boss · EV / Best · drops")
+      detailHdr:Show()
+      metricHdr:ClearAllPoints()
+      metricHdr:SetPoint("RIGHT", advisorFrame.headerFrame, "RIGHT", -10, 0)
+      metricHdr:SetText("EV")
+      metricHdr:Show()
     else
-      detailHdr:SetText("Equipped and alternatives (click to toggle)")
+      slotHdr:SetText("Slot")
+      slotHdr:Show()
+      detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_ICONS_COL_X, 0)
+      if currentMode == "bags" and NS.isGreatVaultFrameOpen() then
+        detailHdr:SetText("Equipped and alternatives (purple border = vault)")
+      else
+        detailHdr:SetText("Equipped and alternatives (click to toggle)")
+      end
+      detailHdr:Show()
     end
-    detailHdr:Show()
   end
 end
 
@@ -1680,6 +1932,8 @@ local function attachScoredRowsToCandidates(rows)
       end
     elseif row.source == "loot" and row.instance_id and itemID then
       byKey[string.format("loot:%d:%d", row.instance_id, itemID)] = row
+      local encounterKey = row.encounter_id or "none"
+      byKey[string.format("loot:%d:%d:%s", row.instance_id, itemID, tostring(encounterKey))] = row
     elseif row.source == "crest" and itemID then
       local rank = row.upgrade_rank or "0"
       rank = tostring(rank):gsub("[^%d/]", ""):match("(%d+)") or "0"
@@ -1720,6 +1974,9 @@ local function attachScoredRowsToCandidates(rows)
               quality = scored.quality or cand.quality,
               instance_id = scored.instance_id or cand.instance_id,
               instance_name = scored.instance_name or cand.instance_name,
+              instance_kind = scored.instance_kind or cand.instance_kind,
+              encounter_id = scored.encounter_id or cand.encounter_id,
+              encounter_name = scored.encounter_name or cand.encounter_name,
               upgrade_track = scored.upgrade_track or cand.upgrade_track,
               preview_ilvl = scored.preview_ilvl or scored.ilvl,
               dps_delta = scored.dps_delta,
@@ -1743,6 +2000,9 @@ local function attachScoredRowsToCandidates(rows)
           cand.is_upgrade = scored.is_upgrade
           cand.slot_id = scored.slot_id or cand.slot_id
           cand.slot_label = scored.slot_label or cand.slot_label
+          cand.instance_kind = scored.instance_kind or cand.instance_kind
+          cand.encounter_id = scored.encounter_id or cand.encounter_id
+          cand.encounter_name = scored.encounter_name or cand.encounter_name
           cand.dps_per_crest = scored.dps_per_crest or cand.dps_per_crest
           list[i] = cand
         end
@@ -1756,6 +2016,7 @@ syncActionButtons = function()
   local loadout = isLoadoutMode()
   local showingResults = isShowingLoadoutResults()
   local scanning = isAdvisorScanActive()
+  local farmView = currentMode == "loot" and getLootViewMode() == "farm"
   local findBtn = advisorFrame.findLoadoutBtn
   local changeBtn = advisorFrame.changeSelectionBtn
   local stopBtn = advisorFrame.stopScanBtn
@@ -1763,7 +2024,8 @@ syncActionButtons = function()
     stopBtn:SetShown(scanning)
   end
   if findBtn then
-    findBtn:SetShown(loadout and not showingResults and not scanning)
+    -- Run Scan belongs to BiS Scan / Bags — not Farm priority.
+    findBtn:SetShown(loadout and not showingResults and not scanning and not farmView)
     findBtn:SetEnabled(
       loadout and scanComplete and not scanning and not showingResults and not comboCountInProgress
     )
@@ -1775,11 +2037,137 @@ syncActionButtons = function()
     advisorFrame.upgradeFilterFrame:SetShown(
       isLoadoutMode() and currentMode ~= "crests"
       and not showingResults and not scanning
+      and not farmView
     )
   end
+  if advisorFrame.lootViewBar then
+    advisorFrame.lootViewBar:SetShown(
+      currentMode == "loot" and scanComplete and not showingResults and not scanning
+    )
+  end
+  if advisorFrame.farmControlsBar then
+    advisorFrame.farmControlsBar:SetShown(isLootFarmView())
+  end
+  syncLootViewTabs()
+  syncFarmControls()
   syncCrestFilterControls()
   syncScanPerfControls()
   syncModeTabs()
+  layoutLootActionBar()
+end
+
+setFarmSortKey = function(sortKey)
+  local key = NS.normalizeFarmSortKey and NS.normalizeFarmSortKey(sortKey) or sortKey
+  if key ~= "ev" and key ~= "best" and key ~= "name" then
+    key = "ev"
+  end
+  MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_sort = key
+  syncFarmControls()
+  if isLootFarmView() then
+    renderAdvisorRows()
+  end
+end
+
+setFarmGroupByInstance = function(checked)
+  MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_group_by_instance = checked and true or false
+  syncFarmControls()
+  if isLootFarmView() then
+    renderAdvisorRows()
+  end
+end
+
+setLootViewMode = function(mode)
+  if mode ~= "farm" and mode ~= "slots" then
+    return
+  end
+  MR_MYTHICAL_DPS_CONFIG.gear_advisor_loot_view = mode
+  syncLootViewTabs()
+  syncFarmControls()
+  syncAdvisorListHeader()
+  syncActionButtons()
+  syncAdvisorStatusText()
+  renderAdvisorRows()
+end
+
+syncFarmControls = function()
+  if not advisorFrame then
+    return
+  end
+  local bar = advisorFrame.farmControlsBar
+  local show = isLootFarmView()
+  if bar then
+    bar:SetShown(show)
+  end
+  local groupCheck = advisorFrame.farmGroupCheck
+  if groupCheck then
+    local checked = isFarmGroupByInstance()
+    if groupCheck.SetChecked then
+      groupCheck:SetChecked(checked)
+    end
+  end
+  local sortDropdown = advisorFrame.farmSortDropdown
+  if sortDropdown then
+    local key = getFarmSortKey()
+    if sortDropdown.SetValue then
+      sortDropdown:SetValue(key, true)
+    elseif UIDropDownMenu_SetText then
+      local label = NS.getFarmSortLabel and NS.getFarmSortLabel(key) or key
+      UIDropDownMenu_SetText(sortDropdown, (NS.MSG_FARM_SORT_PREFIX or "Sort: ") .. label)
+    end
+  end
+  layoutFarmControlsRow()
+  layoutAdvisorChrome()
+end
+
+syncLootViewTabs = function()
+  if not advisorFrame then
+    return
+  end
+  local mode = getLootViewMode()
+  local farmBtn = advisorFrame.lootFarmViewBtn
+  local slotsBtn = advisorFrame.lootSlotsViewBtn
+  local function styleViewBtn(btn, active)
+    if not btn then
+      return
+    end
+    btn._workflowSelected = active and true or false
+    if btn.SetActive then
+      btn:SetActive(active)
+    elseif btn.LockHighlight and btn.UnlockHighlight then
+      if active then
+        btn:LockHighlight()
+      else
+        btn:UnlockHighlight()
+      end
+    end
+    if btn.SetBackdropColor then
+      if active then
+        btn:SetBackdropColor(0.35, 0.32, 0.2, 1)
+      else
+        btn:SetBackdropColor(0.18, 0.18, 0.22, 0.95)
+      end
+    end
+    local function paintLabel()
+      local label = btn.Label or btn.Text or btn.text or (btn.GetFontString and btn:GetFontString())
+      if not label or not label.SetTextColor then
+        return
+      end
+      if btn._workflowSelected then
+        label:SetTextColor(1, 0.92, 0.55)
+      else
+        label:SetTextColor(0.75, 0.78, 0.85)
+      end
+    end
+    paintLabel()
+    if not btn._workflowStyleHooked then
+      btn._workflowStyleHooked = true
+      btn:HookScript("OnEnter", paintLabel)
+      btn:HookScript("OnLeave", paintLabel)
+      btn:HookScript("OnEnable", paintLabel)
+    end
+  end
+  styleViewBtn(farmBtn, mode == "farm")
+  styleViewBtn(slotsBtn, mode == "slots")
 end
 
 local function renderLoadoutVaultWinnerBanner(itemList, listWidth, winnerRow, yOffset)
@@ -1974,27 +2362,30 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
       statusText:SetText(NS.MSG_EQUIP_DONE)
       statusText:SetTextColor(0.45, 0.95, 0.55)
     elseif equipState == "failed" then
-      local equipBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-      equipBtn:SetSize(60, 22)
+      local equipBtn = NS.createUIButton(row, {
+        text = "Retry",
+        width = 60,
+        height = 22,
+        onClick = function()
+          loadoutEquipState[equipKey] = nil
+          tryEquipLoadoutItem(item)
+        end,
+      })
       equipBtn:SetPoint("RIGHT", row, "RIGHT", -88, 0)
-      equipBtn:SetText("Retry")
-      equipBtn:SetScript("OnClick", function()
-        loadoutEquipState[equipKey] = nil
-        tryEquipLoadoutItem(item)
-      end)
       statusText:SetText(NS.MSG_EQUIP_FAILED)
       statusText:SetTextColor(1, 0.45, 0.45)
     else
-      local equipBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-      equipBtn:SetSize(60, 22)
+      local equipBtn = NS.createUIButton(row, {
+        text = (equipState == "pending") and "..." or "Equip",
+        width = 60,
+        height = 22,
+      })
       equipBtn:SetPoint("RIGHT", row, "RIGHT", -88, 0)
       if equipState == "pending" then
-        equipBtn:SetText("...")
         equipBtn:Disable()
         statusText:SetText(NS.MSG_EQUIP_PENDING)
         statusText:SetTextColor(0.95, 0.85, 0.45)
       else
-        equipBtn:SetText("Equip")
         equipBtn:SetScript("OnClick", function()
           tryEquipLoadoutItem(item)
         end)
@@ -2011,17 +2402,36 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
 end
 
 local function renderCrestSectionDivider(itemList, listWidth, label, yOffset)
-  local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
-  table.insert(advisorRows, row)
-  row:SetSize(listWidth, 14)
-  row:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
-  row:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
-  row:SetBackdropColor(0.1, 0.1, 0.13, 0.55)
+  local Lib = NS.getUILib and NS.getUILib() or nil
+  local row
+  if Lib then
+    row = CreateFrame("Frame", nil, itemList)
+    table.insert(advisorRows, row)
+    row:SetSize(listWidth, 14)
+    row:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
+    local bg = Lib:CreateColorTexture(row, Lib.Theme.COLORS.ODD_ROW, "BACKGROUND")
+    bg:SetAllPoints()
+    local text = Lib:CreateLabel(row, {
+      text = label,
+      width = listWidth - 20,
+      height = 14,
+      color = "DISABLED",
+      font = "GameFontDisableSmall",
+    })
+    text:SetPoint("LEFT", row, "LEFT", 10, 0)
+  else
+    row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
+    table.insert(advisorRows, row)
+    row:SetSize(listWidth, 14)
+    row:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
+    row:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
+    row:SetBackdropColor(0.1, 0.1, 0.13, 0.55)
 
-  local text = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  text:SetPoint("LEFT", row, "LEFT", 10, 0)
-  text:SetText(label)
-  text:SetTextColor(0.5, 0.54, 0.58)
+    local text = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    text:SetPoint("LEFT", row, "LEFT", 10, 0)
+    text:SetText(label)
+    text:SetTextColor(0.5, 0.54, 0.58)
+  end
   return yOffset + 16
 end
 
@@ -2184,6 +2594,211 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
   return yOffset + GA_CREST_ROW_H + 1
 end
 
+local function renderFarmBossRow(itemList, listWidth, boss, rowIndex, yOffset, iconsPerLine, opts)
+  opts = opts or {}
+  local baseR, baseG, baseB = 0.11, 0.11, 0.14
+  if rowIndex % 2 == 0 then
+    baseR, baseG, baseB = 0.15, 0.15, 0.19
+  end
+
+  local iconCap = NS.getFarmPriorityIconCap and NS.getFarmPriorityIconCap() or 6
+  local drops = boss.drops or {}
+  local shown = math.min(#drops, iconCap)
+  local more = #drops - shown
+  local lines = math.max(1, math.ceil(math.max(1, shown) / iconsPerLine))
+  local rowHeight = math.max(48, 28 + lines * (GA_ICON_SIZE + GA_ICON_SPACING + 12))
+
+  local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
+  table.insert(advisorRows, row)
+  row:SetSize(listWidth, rowHeight)
+  row:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
+  row:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
+  row:SetBackdropColor(baseR, baseG, baseB, 0.65)
+
+  local prioText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  prioText:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -10)
+  prioText:SetWidth(28)
+  prioText:SetJustifyH("LEFT")
+  prioText:SetText(tostring(rowIndex))
+  prioText:SetTextColor(0.95, 0.85, 0.45)
+
+  local statsWidth = 118
+  local bossName = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  bossName:SetPoint("TOPLEFT", row, "TOPLEFT", 42, -8)
+  bossName:SetPoint("RIGHT", row, "RIGHT", -(statsWidth + 12), 0)
+  bossName:SetJustifyH("LEFT")
+  bossName:SetText(boss.encounter_name or "Unknown")
+  bossName:SetTextColor(0.92, 0.92, 0.96)
+
+  local showInstance = opts.hideInstanceMeta ~= true
+    and lootControls.selectedInstanceId == NS.LOOT_ALL_INSTANCES
+  if showInstance and boss.instance_name then
+    local meta = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    meta:SetPoint("TOPLEFT", bossName, "BOTTOMLEFT", 0, -1)
+    meta:SetText(string.format("%s · %s", boss.instance_kind or "Dungeon", boss.instance_name))
+    meta:SetTextColor(0.55, 0.58, 0.62)
+  end
+
+  local evText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  evText:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -6)
+  evText:SetJustifyH("RIGHT")
+  evText:SetText(NS.formatDelta(boss.expected_value_dps or 0))
+  NS.setDpsDeltaTextColor(evText, boss.expected_value_dps or 0)
+
+  local evLabel = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  evLabel:SetPoint("RIGHT", evText, "LEFT", -4, 0)
+  evLabel:SetJustifyH("RIGHT")
+  evLabel:SetText("EV")
+  evLabel:SetTextColor(0.55, 0.58, 0.62)
+
+  local bestText = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  bestText:SetPoint("TOPRIGHT", evText, "BOTTOMRIGHT", 0, -2)
+  bestText:SetJustifyH("RIGHT")
+  bestText:SetText(NS.formatDelta(boss.best_dps or 0))
+  NS.setDpsDeltaTextColor(bestText, boss.best_dps or 0)
+
+  local bestLabel = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  bestLabel:SetPoint("RIGHT", bestText, "LEFT", -4, 0)
+  bestLabel:SetJustifyH("RIGHT")
+  bestLabel:SetText("Best")
+  bestLabel:SetTextColor(0.55, 0.58, 0.62)
+
+  local iconY = showInstance and -28 or -24
+  for i = 1, shown do
+    local drop = drops[i]
+    local cand = drop.candidate
+    local col = (i - 1) % iconsPerLine
+    local line = math.floor((i - 1) / iconsPerLine)
+    local x = 42 + col * (GA_ICON_SIZE + GA_ICON_SPACING)
+    local y = iconY - line * (GA_ICON_SIZE + GA_ICON_SPACING + 12)
+    local delta = drop.estimate_delta or (cand and cand.dps_delta) or 0
+    local isUpgrade = delta > 0
+
+    local iconBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
+    iconBtn:SetSize(GA_ICON_SIZE, GA_ICON_SIZE)
+    iconBtn:SetPoint("TOPLEFT", row, "TOPLEFT", x, y)
+    iconBtn:SetBackdrop({
+      bgFile = "Interface/Buttons/WHITE8X8",
+      edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+      tile = true,
+      tileSize = 8,
+      edgeSize = 10,
+      insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    if isUpgrade then
+      iconBtn:SetBackdropColor(0, 0, 0, 0.35)
+      iconBtn:SetBackdropBorderColor(0.2, 0.85, 0.25, 1)
+    else
+      iconBtn:SetBackdropColor(0, 0, 0, 0.2)
+      iconBtn:SetBackdropBorderColor(0.32, 0.32, 0.32, 1)
+    end
+
+    local tex = iconBtn:CreateTexture(nil, "ARTWORK")
+    tex:SetAllPoints(iconBtn)
+    local link = cand and (cand.preview_link or cand.link)
+    local iconTexture = link and GetItemIcon(link) or nil
+    if iconTexture then
+      tex:SetTexture(iconTexture)
+    end
+    if isUpgrade then
+      tex:SetVertexColor(1, 1, 1, 1)
+    else
+      tex:SetVertexColor(0.45, 0.45, 0.45, 0.85)
+    end
+
+    local dpsTag = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    dpsTag:SetPoint("TOP", iconBtn, "BOTTOM", 0, -1)
+    dpsTag:SetWidth(GA_ICON_SIZE + 4)
+    dpsTag:SetJustifyH("CENTER")
+    dpsTag:SetText(NS.formatDelta(delta))
+    if isUpgrade then
+      NS.setDpsDeltaTextColor(dpsTag, delta)
+    else
+      dpsTag:SetTextColor(0.55, 0.55, 0.55)
+    end
+
+    iconBtn:SetScript("OnEnter", function(self)
+      self:SetBackdropBorderColor(1, 1, 1, 1)
+      if link then
+        self.mrMythicalAdvisorItemTooltip = true
+        local lines = {}
+        addAdvisorTooltipLine(lines, drop.slot_label or "", 0.7, 0.75, 0.85)
+        addAdvisorTooltipLine(
+          lines,
+          string.format("%s DPS%s", NS.formatDelta(delta), isUpgrade and "" or " · not an upgrade"),
+          isUpgrade and 0.2 or 0.55,
+          isUpgrade and 0.85 or 0.55,
+          isUpgrade and 0.25 or 0.55
+        )
+        if boss.encounter_name then
+          addAdvisorTooltipLine(lines, boss.encounter_name, 0.65, 0.7, 0.8)
+        end
+        self.mrMythicalTooltipExtraLines = lines
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetHyperlink(link)
+        GameTooltip:Show()
+      end
+    end)
+    iconBtn:SetScript("OnLeave", function(self)
+      if isUpgrade then
+        self:SetBackdropBorderColor(0.2, 0.85, 0.25, 1)
+      else
+        self:SetBackdropBorderColor(0.32, 0.32, 0.32, 1)
+      end
+      self.mrMythicalAdvisorItemTooltip = nil
+      self.mrMythicalTooltipExtraLines = nil
+      GameTooltip:Hide()
+    end)
+  end
+
+  if more > 0 then
+    local moreText = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    moreText:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 42, 6)
+    moreText:SetText(string.format("+%d more", more))
+    moreText:SetTextColor(0.55, 0.58, 0.62)
+  end
+
+  return yOffset + rowHeight + 4
+end
+
+local function renderFarmInstanceGroupHeader(itemList, listWidth, group, yOffset)
+  local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
+  table.insert(advisorRows, row)
+  row:SetSize(listWidth, 28)
+  row:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
+  row:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
+  row:SetBackdropColor(0.08, 0.1, 0.14, 0.85)
+
+  local title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  title:SetPoint("LEFT", row, "LEFT", 10, 0)
+  title:SetPoint("RIGHT", row, "RIGHT", -180, 0)
+  title:SetJustifyH("LEFT")
+  title:SetText(string.format("%s: %s", group.instance_kind or "Dungeon", group.instance_name or "Unknown"))
+  title:SetTextColor(0.85, 0.88, 0.95)
+
+  local bestText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  bestText:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+  bestText:SetText(NS.formatDelta(group.group_best or 0))
+  NS.setDpsDeltaTextColor(bestText, group.group_best or 0)
+
+  local bestLabel = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  bestLabel:SetPoint("RIGHT", bestText, "LEFT", -4, 0)
+  bestLabel:SetText("Best")
+  bestLabel:SetTextColor(0.55, 0.58, 0.62)
+
+  local evText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  evText:SetPoint("RIGHT", bestLabel, "LEFT", -12, 0)
+  evText:SetText(NS.formatDelta(group.group_ev or 0))
+  NS.setDpsDeltaTextColor(evText, group.group_ev or 0)
+
+  local evLabel = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  evLabel:SetPoint("RIGHT", evText, "LEFT", -4, 0)
+  evLabel:SetText("EV")
+  evLabel:SetTextColor(0.55, 0.58, 0.62)
+
+  return yOffset + 32
+end
+
 renderAdvisorRows = function()
   if not advisorFrame or not advisorFrame.itemList or not advisorFrame:IsShown() then return end
 
@@ -2242,9 +2857,47 @@ renderAdvisorRows = function()
       yOffset = renderLoadoutRow(itemList, listWidth, item, i, yOffset)
     end
   elseif scanComplete then
-    local slotRows = buildAdvisorSlotOverviewRows()
-    for i, slotRow in ipairs(slotRows) do
-      yOffset = renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, i, yOffset, iconsPerLine)
+    if isLootFarmView() then
+      rebuildFarmRanks()
+      if #farmRanks == 0 then
+        local emptyRow = CreateFrame("Frame", nil, itemList)
+        table.insert(advisorRows, emptyRow)
+        emptyRow:SetSize(listWidth, 36)
+        emptyRow:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
+        local emptyText = emptyRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        emptyText:SetPoint("LEFT", emptyRow, "LEFT", 10, 0)
+        emptyText:SetWidth(listWidth - 20)
+        emptyText:SetJustifyH("LEFT")
+        emptyText:SetText(NS.MSG_FARM_PRIORITY_EMPTY or "No positive upgrades at this track.")
+        emptyText:SetTextColor(0.55, 0.6, 0.65)
+        yOffset = yOffset + 40
+      else
+        local sortKey = getFarmSortKey()
+        local groupByInstance = isFarmGroupByInstance()
+        local sorted = NS.sortFarmPriorityRanks and NS.sortFarmPriorityRanks(farmRanks, sortKey) or farmRanks
+        local rowOpts = { hideInstanceMeta = groupByInstance }
+        local rowIndex = 0
+
+        if groupByInstance and NS.groupFarmPriorityByInstance then
+          local groups = NS.groupFarmPriorityByInstance(sorted, sortKey)
+          for _, group in ipairs(groups) do
+            yOffset = renderFarmInstanceGroupHeader(itemList, listWidth, group, yOffset)
+            for _, boss in ipairs(group.bosses or {}) do
+              rowIndex = rowIndex + 1
+              yOffset = renderFarmBossRow(itemList, listWidth, boss, rowIndex, yOffset, iconsPerLine, rowOpts)
+            end
+          end
+        else
+          for i, boss in ipairs(sorted) do
+            yOffset = renderFarmBossRow(itemList, listWidth, boss, i, yOffset, iconsPerLine, rowOpts)
+          end
+        end
+      end
+    else
+      local slotRows = buildAdvisorSlotOverviewRows()
+      for i, slotRow in ipairs(slotRows) do
+        yOffset = renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, i, yOffset, iconsPerLine)
+      end
     end
   else
     local emptyRow = CreateFrame("Frame", nil, itemList)
@@ -2268,7 +2921,11 @@ renderAdvisorRows = function()
 
   itemList:SetHeight(math.max(40, yOffset + 2))
   if advisorFrame.scrollFrame then
-    advisorFrame.scrollFrame:UpdateScrollChildRect()
+    if advisorFrame.scrollFrame._UpdateScrollRange then
+      advisorFrame.scrollFrame:_UpdateScrollRange()
+    elseif advisorFrame.scrollFrame.UpdateScrollChildRect then
+      advisorFrame.scrollFrame:UpdateScrollChildRect()
+    end
   end
 end
 
@@ -2361,6 +3018,7 @@ local function finishRankScan(runner, rows, errors)
   end
   rebuildCandidateRowsFromSlots()
   NS.applyAdvisorSelectionDefaults(candidateRows, candidatesBySlot, { reset_equipped_baselines = true })
+  rebuildFarmRanks()
   loadoutVaultWinnerKey = nil
 
   scanComplete = true
@@ -2878,6 +3536,21 @@ local function populateScanPerfDropdown()
     return
   end
   local perfDropdown = advisorFrame.perfDropdown
+  if perfDropdown.SetItems then
+    local items = {}
+    for _, modeId in ipairs(NS.SCAN_PERFORMANCE_USER_MODES) do
+      local preset = NS.SCAN_PERFORMANCE_PRESETS[modeId]
+      table.insert(items, { text = preset.label, value = modeId })
+    end
+    perfDropdown:SetItems(items)
+    perfDropdown._onChanged = function(_, value)
+      NS.setScanPerformanceMode(value)
+      syncScanPerfControls()
+    end
+    perfDropdown:SetValue(NS.getScanPerformanceMode(), true)
+    setupScanPerfDropdownTooltip(perfDropdown)
+    return
+  end
   UIDropDownMenu_Initialize(perfDropdown, function(_, level)
     for _, modeId in ipairs(NS.SCAN_PERFORMANCE_USER_MODES) do
       local preset = NS.SCAN_PERFORMANCE_PRESETS[modeId]
@@ -2947,26 +3620,77 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     return advisorFrame
   end
 
-  local f = CreateFrame("Frame", "MrMythicalDpsGearAdvisorFrame", UIParent, "BackdropTemplate")
-  f:SetSize(GA_WIDTH, GA_HEIGHT)
-  f:SetFrameStrata("DIALOG")
-  f:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 },
-  })
-  f:SetBackdropColor(0.08, 0.08, 0.1, 0.96)
-  f:SetBackdropBorderColor(0.45, 0.45, 0.55, 1)
-  f:SetMovable(true)
-  f:EnableMouse(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving)
+  local Lib = NS.getUILib and NS.getUILib() or nil
+  local f
+  if Lib then
+    f = Lib:CreatePanel(UIParent, {
+      name = "MrMythicalDpsGearAdvisorFrame",
+      title = NS.BRAND,
+      width = GA_WIDTH,
+      height = GA_HEIGHT,
+      movable = true,
+      frameStrata = "DIALOG",
+    })
+    local closeBtn = Lib:CreateCloseButton(f)
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -8)
+    f.CloseButton = closeBtn
+
+    if f.Title then
+      f.Title:ClearAllPoints()
+      f.Title:SetPoint("TOPLEFT", f, "TOPLEFT", GA_PADDING, -10)
+      f.Title:SetTextColor(1, 0.92, 0.55)
+    end
+  else
+    f = CreateFrame("Frame", "MrMythicalDpsGearAdvisorFrame", UIParent, "BackdropTemplate")
+    f:SetSize(GA_WIDTH, GA_HEIGHT)
+    f:SetFrameStrata("DIALOG")
+    f:SetBackdrop({
+      bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+      edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 16,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0.08, 0.08, 0.1, 0.96)
+    f:SetBackdropBorderColor(0.45, 0.45, 0.55, 1)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+
+    local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", GA_PADDING, -10)
+    title:SetText(NS.BRAND)
+    title:SetTextColor(1, 0.92, 0.55)
+    f.Title = title
+  end
+
   f:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
     local point, _, relPoint, x, y = self:GetPoint(1)
     MR_MYTHICAL_DPS_CONFIG.gear_advisor_point = { point, relPoint, x, y }
   end)
+  if Lib and Lib.RegisterMovable then
+    Lib:RegisterMovable(f, {
+      get = function()
+        local p = MR_MYTHICAL_DPS_CONFIG.gear_advisor_point or MR_MYTHICAL_DPS_CONFIG.dashboard_point
+        if not p then
+          return nil
+        end
+        return { point = p[1], relativePoint = p[2], x = p[3], y = p[4] }
+      end,
+      set = function(pos)
+        MR_MYTHICAL_DPS_CONFIG.gear_advisor_point = {
+          pos.point,
+          pos.relativePoint or pos.point,
+          pos.x or 0,
+          pos.y or 0,
+        }
+      end,
+    })
+  end
   f:SetScript("OnShow", function()
     if isAdvisorScanActive() then
       local lastText, lastColor = NS.AdvisorScanProgress.getLastStatus()
@@ -2993,23 +3717,21 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     end
   end)
 
-  if MR_MYTHICAL_DPS_CONFIG.gear_advisor_point then
-    local p = MR_MYTHICAL_DPS_CONFIG.gear_advisor_point
-    f:SetPoint(p[1], UIParent, p[2], p[3], p[4])
-  elseif MR_MYTHICAL_DPS_CONFIG.dashboard_point then
-    local p = MR_MYTHICAL_DPS_CONFIG.dashboard_point
-    f:SetPoint(p[1], UIParent, p[2], p[3], p[4])
-  else
+  if not (Lib and Lib.RegisterMovable) then
+    if MR_MYTHICAL_DPS_CONFIG.gear_advisor_point then
+      local p = MR_MYTHICAL_DPS_CONFIG.gear_advisor_point
+      f:SetPoint(p[1], UIParent, p[2], p[3], p[4])
+    elseif MR_MYTHICAL_DPS_CONFIG.dashboard_point then
+      local p = MR_MYTHICAL_DPS_CONFIG.dashboard_point
+      f:SetPoint(p[1], UIParent, p[2], p[3], p[4])
+    else
+      f:SetPoint("CENTER")
+    end
+  elseif not f:GetPoint() then
     f:SetPoint("CENTER")
   end
 
-  local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
-
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  title:SetPoint("TOPLEFT", f, "TOPLEFT", GA_PADDING, -10)
-  title:SetText(NS.BRAND)
-  title:SetTextColor(1, 0.92, 0.55)
+  local title = f.Title
 
   local versionText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   versionText:SetPoint("LEFT", title, "RIGHT", 8, 0)
@@ -3046,32 +3768,64 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   profileCallout:SetTextColor(1, 0.82, 0.2)
   profileCallout:Hide()
 
-  local profileDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorProfileDropdown", f, "UIDropDownMenuTemplate")
-  profileDropdown:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", -16, -16)
+  local profileDropdown
+  if Lib and Lib.CreateDropdown then
+    profileDropdown = Lib:CreateDropdown(f, {
+      name = "MrMythicalDpsAdvisorProfileDropdown",
+      width = 220,
+    })
+    profileDropdown:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", 0, -16)
+  else
+    profileDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorProfileDropdown", f, "UIDropDownMenuTemplate")
+    profileDropdown:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", -16, -16)
+  end
   f.profileDropdown = profileDropdown
 
-  local modeBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  local modeBar
+  if Lib then
+    modeBar = CreateFrame("Frame", nil, f)
+  else
+    modeBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  end
   modeBar:SetPoint("TOP", profileDropdown, "BOTTOM", 0, -8)
   modeBar:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   modeBar:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
   modeBar:SetHeight(26)
-  modeBar:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
-  modeBar:SetBackdropColor(0.12, 0.12, 0.16, 0.8)
+  if Lib then
+    local modeBg = Lib:CreateColorTexture(modeBar, Lib.Theme.COLORS.NAV_BACKGROUND, "BACKGROUND")
+    modeBg:SetAllPoints()
+  else
+    modeBar:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
+    modeBar:SetBackdropColor(0.12, 0.12, 0.16, 0.8)
+  end
   f.modeBar = modeBar
   f.modeButtons = {}
 
   local MODE_TAB_WIDTHS = { bags = 120, loot = 210, crests = 155 }
   local mx = 6
   for _, mode in ipairs(MODE_TABS) do
-    local btn = CreateFrame("Button", nil, modeBar, "BackdropTemplate")
     local tabWidth = MODE_TAB_WIDTHS[mode.id] or 150
-    btn:SetSize(tabWidth, 22)
-    btn:SetPoint("LEFT", modeBar, "LEFT", mx, 0)
-    btn:SetBackdrop({ bgFile = "Interface/Buttons/WHITE8X8", tile = true, tileSize = 8 })
-    btn:SetBackdropColor(0.14, 0.14, 0.18, 0.9)
-    btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    btn.text:SetPoint("CENTER")
-    btn.text:SetText(mode.label)
+    local btn
+    if Lib then
+      btn = Lib:CreateNavTab(modeBar, {
+        text = mode.label,
+        id = mode.id,
+        width = tabWidth,
+        height = 22,
+        selected = false,
+      })
+      btn:SetPoint("LEFT", modeBar, "LEFT", mx, 0)
+      btn.text = btn.Label
+    else
+      btn = CreateFrame("Button", nil, modeBar, "BackdropTemplate")
+      btn:SetSize(tabWidth, 22)
+      btn:SetPoint("LEFT", modeBar, "LEFT", mx, 0)
+      btn:SetBackdrop({ bgFile = "Interface/Buttons/WHITE8X8", tile = true, tileSize = 8 })
+      btn:SetBackdropColor(0.14, 0.14, 0.18, 0.9)
+      btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      btn.text:SetPoint("CENTER")
+      btn.text:SetText(mode.label)
+    end
     btn:SetScript("OnClick", function() selectMode(mode.id) end)
     f.modeButtons[mode.id] = btn
     mx = mx + tabWidth + 6
@@ -3100,13 +3854,20 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   scanTimerText:Hide()
   f.scanTimerText = scanTimerText
 
-  local actionBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  local actionBar
+  if Lib then
+    actionBar = CreateFrame("Frame", nil, f)
+    local actionBg = Lib:CreateColorTexture(actionBar, Lib.Theme.COLORS.NAV_BACKGROUND, "BACKGROUND")
+    actionBg:SetAllPoints()
+  else
+    actionBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    actionBar:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
+    actionBar:SetBackdropColor(0.14, 0.14, 0.18, 0.75)
+  end
   actionBar:SetPoint("TOP", statusFrame, "BOTTOM", 0, -1)
   actionBar:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   actionBar:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
   actionBar:SetHeight(GA_ACTION_H)
-  actionBar:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
-  actionBar:SetBackdropColor(0.14, 0.14, 0.18, 0.75)
   f.actionBar = actionBar
 
   local vaultStatusText = actionBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -3115,53 +3876,196 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   vaultStatusText:SetJustifyH("RIGHT")
   f.vaultStatusText = vaultStatusText
 
-  local findLoadoutBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
-  findLoadoutBtn:SetSize(110, 24)
+  local findLoadoutBtn = NS.createUIButton(actionBar, {
+    text = NS.MSG_RUN_SCAN or "Run Scan",
+    width = 90,
+    height = 24,
+    onClick = runFindLoadout,
+  })
   findLoadoutBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
-  findLoadoutBtn:SetText("Find Loadout")
-  findLoadoutBtn:SetScript("OnClick", runFindLoadout)
   f.findLoadoutBtn = findLoadoutBtn
 
-  local changeSelectionBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
-  changeSelectionBtn:SetSize(120, 24)
+  local lootViewBar = CreateFrame("Frame", nil, actionBar)
+  lootViewBar:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
+  lootViewBar:SetSize(204, 24)
+  lootViewBar:Hide()
+  f.lootViewBar = lootViewBar
+
+  local lootFarmViewBtn = NS.createUIButton(lootViewBar, {
+    text = NS.MSG_FARM_VIEW_FARM or "Farm priority",
+    width = 110,
+    height = 22,
+    onClick = function()
+      setLootViewMode("farm")
+    end,
+  })
+  lootFarmViewBtn:SetPoint("LEFT", lootViewBar, "LEFT", 0, 0)
+  f.lootFarmViewBtn = lootFarmViewBtn
+
+  local lootSlotsViewBtn = NS.createUIButton(lootViewBar, {
+    text = NS.MSG_FARM_VIEW_SLOTS or "BiS Scan",
+    width = 88,
+    height = 22,
+    onClick = function()
+      setLootViewMode("slots")
+    end,
+  })
+  lootSlotsViewBtn:SetPoint("LEFT", lootFarmViewBtn, "RIGHT", 4, 0)
+  f.lootSlotsViewBtn = lootSlotsViewBtn
+
+  local farmControlsBar
+  if Lib then
+    farmControlsBar = CreateFrame("Frame", nil, f)
+    local farmBg = Lib:CreateColorTexture(farmControlsBar, Lib.Theme.COLORS.NAV_BACKGROUND, "BACKGROUND")
+    farmBg:SetAllPoints()
+  else
+    farmControlsBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    farmControlsBar:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
+    farmControlsBar:SetBackdropColor(0.14, 0.14, 0.18, 0.75)
+  end
+  farmControlsBar:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
+  farmControlsBar:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
+  farmControlsBar:SetHeight(GA_FILTER_ROW_H)
+  farmControlsBar:Hide()
+  f.farmControlsBar = farmControlsBar
+
+  local farmSortItems = {}
+  for _, opt in ipairs(NS.FARM_SORT_OPTIONS or {
+    { key = "ev", label = "Expected Value" },
+    { key = "best", label = "Best upgrade" },
+    { key = "name", label = "Boss name" },
+  }) do
+    farmSortItems[#farmSortItems + 1] = {
+      text = (NS.MSG_FARM_SORT_PREFIX or "Sort: ") .. opt.label,
+      value = opt.key,
+    }
+  end
+
+  local farmGroupCheck = NS.createUICheckbox(farmControlsBar, {
+    text = NS.MSG_FARM_GROUP_INSTANCE or "Group by instance",
+    width = 160,
+    height = 22,
+    checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_group_by_instance == true,
+    onClick = function(_, checked)
+      setFarmGroupByInstance(checked)
+    end,
+  })
+  farmGroupCheck:SetPoint("LEFT", farmControlsBar, "LEFT", 10, 0)
+  setupAdvisorCheckbox(farmGroupCheck, NS.MSG_FARM_GROUP_INSTANCE or "Group by instance", false)
+  f.farmGroupCheck = farmGroupCheck
+
+  local farmSortDropdown
+  if Lib and Lib.CreateDropdown then
+    farmSortDropdown = Lib:CreateDropdown(farmControlsBar, {
+      name = "MrMythicalDpsAdvisorFarmSortDropdown",
+      width = 168,
+      items = farmSortItems,
+      value = getFarmSortKey(),
+      onValueChanged = function(_, value)
+        setFarmSortKey(value)
+      end,
+    })
+  else
+    farmSortDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorFarmSortDropdown", farmControlsBar, "UIDropDownMenuTemplate")
+    UIDropDownMenu_SetWidth(farmSortDropdown, 150)
+    UIDropDownMenu_Initialize(farmSortDropdown, function(_, level)
+      for _, item in ipairs(farmSortItems) do
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = item.text
+        info.checked = getFarmSortKey() == item.value
+        info.func = function()
+          setFarmSortKey(item.value)
+        end
+        UIDropDownMenu_AddButton(info, level)
+      end
+    end)
+    local label = NS.getFarmSortLabel and NS.getFarmSortLabel(getFarmSortKey()) or "Expected Value"
+    UIDropDownMenu_SetText(farmSortDropdown, (NS.MSG_FARM_SORT_PREFIX or "Sort: ") .. label)
+  end
+  farmSortDropdown:SetPoint("LEFT", farmGroupCheck, "RIGHT", 12, 0)
+  f.farmSortDropdown = farmSortDropdown
+
+  local changeSelectionBtn = NS.createUIButton(actionBar, {
+    text = "Change Selection",
+    width = 120,
+    height = 24,
+    onClick = returnToSelectionView,
+  })
   changeSelectionBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
-  changeSelectionBtn:SetText("Change Selection")
   changeSelectionBtn:Hide()
-  changeSelectionBtn:SetScript("OnClick", returnToSelectionView)
   f.changeSelectionBtn = changeSelectionBtn
 
-  local stopScanBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
-  stopScanBtn:SetSize(90, 24)
+  local stopScanBtn = NS.createUIButton(actionBar, {
+    text = "Stop Scan",
+    width = 90,
+    height = 24,
+    onClick = stopAdvisorScan,
+  })
   stopScanBtn:SetPoint("TOPLEFT", actionBar, "TOPLEFT", 8, -4)
-  stopScanBtn:SetText("Stop Scan")
   stopScanBtn:Hide()
-  stopScanBtn:SetScript("OnClick", stopAdvisorScan)
   f.stopScanBtn = stopScanBtn
 
-  local upgradeFilterFrame = CreateFrame("Frame", nil, actionBar)
-  upgradeFilterFrame:SetPoint("TOPLEFT", findLoadoutBtn, "TOPRIGHT", 12, 0)
-  upgradeFilterFrame:SetHeight(56)
+  local upgradeFilterFrame
+  if Lib then
+    upgradeFilterFrame = CreateFrame("Frame", nil, f)
+    local filterBg = Lib:CreateColorTexture(upgradeFilterFrame, Lib.Theme.COLORS.NAV_BACKGROUND, "BACKGROUND")
+    filterBg:SetAllPoints()
+  else
+    upgradeFilterFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    upgradeFilterFrame:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
+    upgradeFilterFrame:SetBackdropColor(0.14, 0.14, 0.18, 0.75)
+  end
+  upgradeFilterFrame:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
+  upgradeFilterFrame:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
+  upgradeFilterFrame:SetHeight(GA_FILTER_ROW_H)
+  upgradeFilterFrame:Hide()
   f.upgradeFilterFrame = upgradeFilterFrame
 
-  local upgradesOnlyCheck = CreateFrame("CheckButton", nil, upgradeFilterFrame, "UICheckButtonTemplate")
-  upgradesOnlyCheck:SetPoint("TOPLEFT", upgradeFilterFrame, "TOPLEFT", 0, 0)
+  local upgradesOnlyCheck = NS.createUICheckbox(upgradeFilterFrame, {
+    text = "Upgrades only",
+    width = 150,
+    height = 22,
+    checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only == true,
+    onClick = function(self, checked)
+      MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only = checked and true or false
+      onUpgradeFilterChanged()
+    end,
+  })
+  upgradesOnlyCheck:SetPoint("LEFT", upgradeFilterFrame, "LEFT", 10, 0)
   setupAdvisorCheckbox(upgradesOnlyCheck, "Upgrades only", false)
-  upgradesOnlyCheck:SetChecked(MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only == true)
-  upgradesOnlyCheck:SetScript("OnClick", function(self)
-    MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only = self:GetChecked() and true or false
-    onUpgradeFilterChanged()
-  end)
   f.upgradesOnlyCheck = upgradesOnlyCheck
 
-  local sidegradeCheck = CreateFrame("CheckButton", nil, upgradeFilterFrame, "UICheckButtonTemplate")
-  sidegradeCheck:SetPoint("TOPLEFT", upgradesOnlyCheck, "BOTTOMLEFT", 0, 6)
-  setupAdvisorCheckbox(sidegradeCheck, "Include sidegrades & small downgrades", true)
-  sidegradeCheck:SetChecked(MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades == true)
-  sidegradeCheck:SetScript("OnClick", function(self)
-    NS.setAdvisorIncludeSidegrades(self:GetChecked())
-    onUpgradeFilterChanged()
-  end)
+  local sidegradeCheck = NS.createUICheckbox(upgradeFilterFrame, {
+    text = "Include sidegrades",
+    width = 180,
+    height = 22,
+    checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades == true,
+    onClick = function(self, checked)
+      NS.setAdvisorIncludeSidegrades(checked)
+      onUpgradeFilterChanged()
+    end,
+  })
+  sidegradeCheck:SetPoint("LEFT", upgradesOnlyCheck, "RIGHT", 18, 0)
+  setupAdvisorCheckbox(sidegradeCheck, "Include sidegrades", false)
   f.sidegradeCheck = sidegradeCheck
+  do
+    local Lib = NS.getUILib and NS.getUILib() or nil
+    local tip = "Also include sidegrades and small downgrades (down to "
+      .. tostring(NS.ADVISOR_SIDEGRADE_DPS_FLOOR or -500)
+      .. " DPS)."
+    if Lib and Lib.AttachTooltip then
+      Lib:AttachTooltip(sidegradeCheck, tip)
+    else
+      sidegradeCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(tip, nil, nil, nil, nil, true)
+        GameTooltip:Show()
+      end)
+      sidegradeCheck:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+      end)
+    end
+  end
 
   local crestFilterFrame = CreateFrame("Frame", nil, actionBar)
   crestFilterFrame:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
@@ -3175,30 +4079,65 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   crestBalanceBar:SetHeight(20)
   f.crestBalanceBar = crestBalanceBar
 
-  local instanceDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorInstanceDropdown", actionBar, "UIDropDownMenuTemplate")
-  instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, -2)
-  UIDropDownMenu_SetWidth(instanceDropdown, 180)
-  instanceDropdown:Hide()
-  f.instanceDropdown = instanceDropdown
+  local instanceDropdown
+  local ilvlDropdown
+  local perfDropdown
+  if Lib and Lib.CreateDropdown then
+    instanceDropdown = Lib:CreateDropdown(actionBar, {
+      name = "MrMythicalDpsAdvisorInstanceDropdown",
+      width = 200,
+      minMenuWidth = 260,
+      maxMenuWidth = 420,
+    })
+    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, -2)
+    instanceDropdown:Hide()
+    f.instanceDropdown = instanceDropdown
 
-  local ilvlDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorIlvlDropdown", actionBar, "UIDropDownMenuTemplate")
-  ilvlDropdown:SetPoint("RIGHT", instanceDropdown, "LEFT", -8, 0)
-  UIDropDownMenu_SetWidth(ilvlDropdown, 130)
-  ilvlDropdown:Hide()
-  f.ilvlDropdown = ilvlDropdown
+    ilvlDropdown = Lib:CreateDropdown(actionBar, {
+      name = "MrMythicalDpsAdvisorIlvlDropdown",
+      width = 160,
+      minMenuWidth = 200,
+      maxMenuWidth = 320,
+    })
+    ilvlDropdown:SetPoint("RIGHT", instanceDropdown, "LEFT", -8, 0)
+    ilvlDropdown:Hide()
+    f.ilvlDropdown = ilvlDropdown
 
-  local perfDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorPerfDropdown", actionBar, "UIDropDownMenuTemplate")
-  perfDropdown:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -2)
-  UIDropDownMenu_SetWidth(perfDropdown, 118)
-  f.perfDropdown = perfDropdown
+    perfDropdown = Lib:CreateDropdown(actionBar, {
+      name = "MrMythicalDpsAdvisorPerfDropdown",
+      width = 118,
+    })
+    perfDropdown:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -2)
+    f.perfDropdown = perfDropdown
+  else
+    -- TODO(MINOR 8+): remove UIDropDownMenuTemplate fallback once Lib is required
+    instanceDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorInstanceDropdown", actionBar, "UIDropDownMenuTemplate")
+    instanceDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, -2)
+    UIDropDownMenu_SetWidth(instanceDropdown, 200)
+    instanceDropdown:Hide()
+    f.instanceDropdown = instanceDropdown
 
-  local perfToggleBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
-  perfToggleBtn:SetSize(132, 24)
+    ilvlDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorIlvlDropdown", actionBar, "UIDropDownMenuTemplate")
+    ilvlDropdown:SetPoint("RIGHT", instanceDropdown, "LEFT", -8, 0)
+    UIDropDownMenu_SetWidth(ilvlDropdown, 160)
+    ilvlDropdown:Hide()
+    f.ilvlDropdown = ilvlDropdown
+
+    perfDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorPerfDropdown", actionBar, "UIDropDownMenuTemplate")
+    perfDropdown:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -2)
+    UIDropDownMenu_SetWidth(perfDropdown, 118)
+    f.perfDropdown = perfDropdown
+  end
+
+  local perfToggleBtn = NS.createUIButton(actionBar, {
+    width = 132,
+    height = 24,
+    onClick = function()
+      toggleAdvisorScanPerformance()
+    end,
+  })
   perfToggleBtn:SetPoint("TOPRIGHT", actionBar, "TOPRIGHT", -8, -4)
   perfToggleBtn:Hide()
-  perfToggleBtn:SetScript("OnClick", function()
-    toggleAdvisorScanPerformance()
-  end)
   f.perfToggleBtn = perfToggleBtn
 
   local lootHint = actionBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -3207,17 +4146,24 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   lootHint:Hide()
   f.lootHint = lootHint
 
-  local headerFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  local headerFrame
+  if Lib then
+    headerFrame = CreateFrame("Frame", nil, f)
+    local headerBg = Lib:CreateColorTexture(headerFrame, Lib.Theme.COLORS.BUTTON_BG, "BACKGROUND")
+    headerBg:SetAllPoints()
+  else
+    headerFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    headerFrame:SetBackdrop({
+      bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+      edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 1,
+    })
+    headerFrame:SetBackdropColor(0.18, 0.18, 0.22, 0.9)
+  end
   headerFrame:SetPoint("TOP", actionBar, "BOTTOM", 0, -2)
   headerFrame:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
   headerFrame:SetPoint("RIGHT", f, "RIGHT", -GA_SCROLL_INSET, 0)
   headerFrame:SetHeight(GA_HEADER_H)
-  headerFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 1,
-  })
-  headerFrame:SetBackdropColor(0.18, 0.18, 0.22, 0.9)
   f.headerFrame = headerFrame
 
   local headerSlot = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -3259,46 +4205,89 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   headerCost:Hide()
   f.headerCost = headerCost
 
-  local scrollFrame = CreateFrame("ScrollFrame", "MrMythicalDpsGearAdvisorScroll", f, "UIPanelScrollFrameTemplate")
-  scrollFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -2)
-  scrollFrame:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -2)
-  scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA_SCROLL_INSET, GA_PADDING)
-  f.scrollFrame = scrollFrame
-
-  local itemList = CreateFrame("Frame", nil, scrollFrame)
-  itemList:SetSize(scrollFrame:GetWidth() or (GA_WIDTH - GA_PADDING - GA_SCROLL_INSET), 1)
-  scrollFrame:SetScrollChild(itemList)
+  local scrollHost
+  local itemList
+  if Lib then
+    scrollHost = Lib:CreateScrollFrame(f, {
+      name = "MrMythicalDpsGearAdvisorScroll",
+      width = GA_WIDTH - GA_PADDING - GA_SCROLL_INSET,
+      height = 300,
+    })
+    scrollHost:ClearAllPoints()
+    scrollHost:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -2)
+    scrollHost:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -2)
+    scrollHost:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA_SCROLL_INSET, GA_PADDING)
+    itemList = CreateFrame("Frame", nil, scrollHost)
+    itemList:SetSize(math.max(1, (scrollHost:GetWidth() or (GA_WIDTH - GA_PADDING - GA_SCROLL_INSET)) - 20), 1)
+    scrollHost:SetScrollChild(itemList)
+  else
+    scrollHost = CreateFrame("ScrollFrame", "MrMythicalDpsGearAdvisorScroll", f, "UIPanelScrollFrameTemplate")
+    scrollHost:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -2)
+    scrollHost:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -2)
+    scrollHost:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA_SCROLL_INSET, GA_PADDING)
+    itemList = CreateFrame("Frame", nil, scrollHost)
+    itemList:SetSize(scrollHost:GetWidth() or (GA_WIDTH - GA_PADDING - GA_SCROLL_INSET), 1)
+    scrollHost:SetScrollChild(itemList)
+  end
+  f.scrollFrame = scrollHost
   f.itemList = itemList
 
-  UIDropDownMenu_Initialize(profileDropdown, function(_, level)
-    local info = UIDropDownMenu_CreateInfo()
-    info.notCheckable = true
-    info.text = "Select profile"
-    info.func = function()
+  if profileDropdown.SetItems then
+    local function rebuildProfileItems()
+      local items = { { text = "Select profile", value = false } }
+      for _, profileKey in ipairs(NS.active_spec_keys) do
+        local label = NS.getProfileLabel(profileKey)
+        if MR_MYTHICAL_DPS_CONFIG.debug then
+          label = label .. " (" .. profileKey .. ")"
+        end
+        table.insert(items, { text = label, value = profileKey })
+      end
+      profileDropdown:SetItems(items)
+    end
+    rebuildProfileItems()
+    profileDropdown._onChanged = function(_, value)
       clearModeScanCache()
-      NS.setActiveProfileKey(nil)
+      if value == false or value == nil then
+        NS.setActiveProfileKey(nil)
+      else
+        NS.setActiveProfileKey(value)
+      end
       NS.refreshGearAdvisorChrome()
       scheduleAdvisorScan()
     end
-    UIDropDownMenu_AddButton(info, level)
-
-    for _, profileKey in ipairs(NS.active_spec_keys) do
-      info = UIDropDownMenu_CreateInfo()
+    local active = NS.getActiveProfileKey()
+    profileDropdown:SetValue(active or false, true)
+  else
+    UIDropDownMenu_Initialize(profileDropdown, function(_, level)
+      local info = UIDropDownMenu_CreateInfo()
       info.notCheckable = true
-      local label = NS.getProfileLabel(profileKey)
-      if MR_MYTHICAL_DPS_CONFIG.debug then
-        label = label .. " (" .. profileKey .. ")"
-      end
-      info.text = label
+      info.text = "Select profile"
       info.func = function()
         clearModeScanCache()
-        NS.setActiveProfileKey(profileKey)
+        NS.setActiveProfileKey(nil)
         NS.refreshGearAdvisorChrome()
         scheduleAdvisorScan()
       end
       UIDropDownMenu_AddButton(info, level)
-    end
-  end)
+
+      for _, profileKey in ipairs(NS.active_spec_keys) do
+        info = UIDropDownMenu_CreateInfo()
+        info.notCheckable = true
+        local label = NS.getProfileLabel(profileKey)
+        if MR_MYTHICAL_DPS_CONFIG.debug then
+          label = label .. " (" .. profileKey .. ")"
+        end
+        info.text = label
+        info.func = function()
+          clearModeScanCache()
+          NS.setActiveProfileKey(profileKey)
+          NS.refreshGearAdvisorChrome()
+          scheduleAdvisorScan()
+        end
+        UIDropDownMenu_AddButton(info, level)
+      end
+    end)
+  end
 
   advisorFrame = f
   lootControls.selectedInstanceId = MR_MYTHICAL_DPS_CONFIG.gear_advisor_instance_id or NS.LOOT_ALL_INSTANCES
@@ -3346,7 +4335,23 @@ function NS.refreshGearAdvisorChrome(highlightAmbiguous)
     end
   end
   if f.profileDropdown then
-    UIDropDownMenu_SetText(f.profileDropdown, dropLabel)
+    if f.profileDropdown.SetValue then
+      local items = { { text = "Select profile", value = false } }
+      for _, profileKey in ipairs(NS.active_spec_keys) do
+        local label = NS.getProfileLabel(profileKey)
+        if MR_MYTHICAL_DPS_CONFIG.debug then
+          label = label .. " (" .. profileKey .. ")"
+        end
+        table.insert(items, { text = label, value = profileKey })
+      end
+      f.profileDropdown:SetItems(items)
+      f.profileDropdown:SetValue(active or false, true)
+      if f.profileDropdown.Button and f.profileDropdown.Button.SetLabel then
+        f.profileDropdown.Button:SetLabel(dropLabel)
+      end
+    else
+      UIDropDownMenu_SetText(f.profileDropdown, dropLabel)
+    end
   end
 
   if profileCallout then

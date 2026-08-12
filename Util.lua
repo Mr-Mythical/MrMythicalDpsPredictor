@@ -98,7 +98,7 @@ function NS.getActivePrimaryStatItemKey()
   if not specIndex then
     return nil
   end
-  local primaryStat = select(7, GetSpecializationInfo(specIndex))
+  local primaryStat = select(6, GetSpecializationInfo(specIndex))
   return PRIMARY_STAT_ITEM_KEY[primaryStat]
 end
 
@@ -116,4 +116,106 @@ function NS.applyItemStatMods(targetStats, sourceTable, sign)
       end
     end
   end
+end
+
+function NS.getUILib()
+  return LibStub and LibStub("LibMrMythicalUI-1.0", true) or nil
+end
+
+--- Themed push button (falls back to UIPanelButtonTemplate).
+--- @param parent Frame
+--- @param opts table { text, width, height, onClick, name }
+--- @return Button
+function NS.createUIButton(parent, opts)
+  opts = opts or {}
+  local Lib = NS.getUILib()
+  if Lib then
+    return Lib:CreateButton(parent, opts)
+  end
+
+  local btn = CreateFrame("Button", opts.name, parent, "UIPanelButtonTemplate")
+  btn:SetSize(opts.width or 120, opts.height or 24)
+  btn:SetText(opts.text or "")
+  if opts.onClick then
+    btn:SetScript("OnClick", opts.onClick)
+  end
+  return btn
+end
+
+--- Custom scroll frame with optional sized child.
+--- @return Frame scrollHost, Frame scrollChild
+function NS.createUIScrollFrame(parent, opts)
+  opts = opts or {}
+  local Lib = NS.getUILib()
+  local width = opts.width or 300
+  local height = opts.height or 200
+  local scroll
+  if Lib then
+    scroll = Lib:CreateScrollFrame(parent, {
+      name = opts.name,
+      width = width,
+      height = height,
+    })
+  else
+    scroll = CreateFrame("ScrollFrame", opts.name, parent, "UIPanelScrollFrameTemplate")
+    scroll:SetSize(width, height)
+  end
+
+  local child = CreateFrame("Frame", nil, scroll)
+  child:SetSize(math.max(1, width - (Lib and 20 or 0)), opts.childHeight or height)
+  scroll:SetScrollChild(child)
+  return scroll, child
+end
+
+--- Status bar (Lib SetMinMaxValues/SetValue when available).
+function NS.createUIStatusBar(parent, opts)
+  opts = opts or {}
+  local Lib = NS.getUILib()
+  if Lib then
+    return Lib:CreateStatusBar(parent, {
+      name = opts.name,
+      width = opts.width or 200,
+      height = opts.height or 14,
+      percent = 0,
+      showLabel = opts.showLabel == true,
+    })
+  end
+
+  local progressBar = CreateFrame("StatusBar", nil, parent)
+  progressBar:SetSize(opts.width or 200, opts.height or 14)
+  progressBar:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar")
+  progressBar:SetStatusBarColor(0.45, 0.85, 0.55)
+  progressBar:SetMinMaxValues(0, 1)
+  progressBar:SetValue(0)
+  local progressBg = progressBar:CreateTexture(nil, "BACKGROUND")
+  progressBg:SetAllPoints(progressBar)
+  progressBg:SetColorTexture(0.12, 0.12, 0.16, 0.9)
+  return progressBar
+end
+
+--- Themed checkbox using CreateCheckbox when available.
+function NS.createUICheckbox(parent, opts)
+  opts = opts or {}
+  local Lib = NS.getUILib()
+  if Lib then
+    return Lib:CreateCheckbox(parent, opts)
+  end
+  local check = CreateFrame("CheckButton", opts.name, parent, "UICheckButtonTemplate")
+  check:SetSize(24, 24)
+  if opts.text then
+    local text = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    text:SetPoint("LEFT", check, "RIGHT", 4, 0)
+    text:SetText(opts.text)
+    check.text = text
+    check.Label = text
+  end
+  if opts.checked then
+    check:SetChecked(true)
+  end
+  if opts.onClick then
+    check:SetScript("OnClick", function(self)
+      opts.onClick(self, self:GetChecked())
+    end)
+  end
+  return check
 end

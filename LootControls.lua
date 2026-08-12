@@ -89,15 +89,60 @@ function NS.createLootControlState(opts)
     MR_MYTHICAL_DPS_CONFIG[instanceConfigKey] = NS.LOOT_ALL_INSTANCES
   end
 
+  --- @return table[] { {text, value}, ... }
+  function state:getIlvlItems()
+    local items = {}
+    for _, preset in ipairs(NS.getLootUpgradePresets() or {}) do
+      table.insert(items, { text = preset.label, value = preset.key })
+    end
+    return items
+  end
+
+  --- @return table[] { {text, value}, ... }
+  function state:getInstanceItems()
+    self.instanceList = NS.collectEncounterJournalInstances()
+    self:validateSelectedInstance()
+    local items = {
+      { text = "All current season", value = NS.LOOT_ALL_INSTANCES },
+    }
+    for _, inst in ipairs(self.instanceList or {}) do
+      table.insert(items, { text = inst.label, value = inst.id })
+    end
+    return items
+  end
+
+  local function isLibDropdown(dropdown)
+    return dropdown and type(dropdown.SetItems) == "function" and type(dropdown.SetValue) == "function"
+  end
+
   function state:syncIlvlDropdownText(dropdown)
     if not dropdown then return end
     self:ensureSelectedLootUpgrade()
-    UIDropDownMenu_SetText(dropdown, self:getLootUpgradeLabel(self.selectedLootUpgradeKey))
+    local label = self:getLootUpgradeLabel(self.selectedLootUpgradeKey)
+    if isLibDropdown(dropdown) then
+      dropdown:SetValue(self.selectedLootUpgradeKey, true)
+      if dropdown.Button and dropdown.Button.SetLabel then
+        dropdown.Button:SetLabel(label)
+      end
+    else
+      UIDropDownMenu_SetText(dropdown, label)
+    end
   end
 
   function state:populateIlvlDropdown(dropdown, onChanged)
     if not dropdown then return end
     self:ensureSelectedLootUpgrade()
+    if isLibDropdown(dropdown) then
+      dropdown:SetItems(self:getIlvlItems())
+      dropdown._onChanged = function(_, value)
+        self.selectedLootUpgradeKey = value
+        MR_MYTHICAL_DPS_CONFIG[lootUpgradeConfigKey] = value
+        self:syncIlvlDropdownText(dropdown)
+        if onChanged then onChanged() end
+      end
+      self:syncIlvlDropdownText(dropdown)
+      return
+    end
     UIDropDownMenu_Initialize(dropdown, function(_, level)
       local info = UIDropDownMenu_CreateInfo()
       info.notCheckable = true
@@ -118,11 +163,30 @@ function NS.createLootControlState(opts)
   function state:syncInstanceDropdownText(dropdown)
     if not dropdown then return end
     self:ensureSelectedInstance()
-    UIDropDownMenu_SetText(dropdown, self:getInstanceLabel(self.selectedInstanceId))
+    local label = self:getInstanceLabel(self.selectedInstanceId)
+    if isLibDropdown(dropdown) then
+      dropdown:SetValue(self.selectedInstanceId, true)
+      if dropdown.Button and dropdown.Button.SetLabel then
+        dropdown.Button:SetLabel(label)
+      end
+    else
+      UIDropDownMenu_SetText(dropdown, label)
+    end
   end
 
   function state:populateInstanceDropdown(dropdown, onChanged)
     if not dropdown then return end
+    if isLibDropdown(dropdown) then
+      dropdown:SetItems(self:getInstanceItems())
+      dropdown._onChanged = function(_, value)
+        self.selectedInstanceId = value
+        MR_MYTHICAL_DPS_CONFIG[instanceConfigKey] = value
+        self:syncInstanceDropdownText(dropdown)
+        if onChanged then onChanged() end
+      end
+      self:syncInstanceDropdownText(dropdown)
+      return
+    end
     self.instanceList = NS.collectEncounterJournalInstances()
     self:validateSelectedInstance()
     UIDropDownMenu_Initialize(dropdown, function(_, level)

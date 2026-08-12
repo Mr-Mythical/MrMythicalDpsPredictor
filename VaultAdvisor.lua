@@ -87,28 +87,52 @@ local function ensureVaultPopup()
     return vaultPopup
   end
 
-  local f = CreateFrame("Frame", "MrMythicalVaultAdvisorPopup", UIParent, "BackdropTemplate")
-  f:SetSize(300, 132)
-  f:SetFrameStrata("FULLSCREEN_DIALOG")
-  f:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 14,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 },
-  })
-  f:SetBackdropColor(0.08, 0.07, 0.12, 0.97)
-  f:SetBackdropBorderColor(0.55, 0.35, 0.85, 1)
+  local Lib = NS.getUILib and NS.getUILib() or nil
+  local f
+  if Lib then
+    f = Lib:CreatePanel(UIParent, {
+      name = "MrMythicalVaultAdvisorPopup",
+      title = "Great Vault",
+      width = 300,
+      height = 132,
+      frameStrata = "FULLSCREEN_DIALOG",
+    })
+    if f.Title then
+      f.Title:ClearAllPoints()
+      f.Title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -12)
+      f.Title:SetTextColor(0.9, 0.78, 1)
+    end
+    local closeBtn = Lib:CreateCloseButton(f, function()
+      f:Hide()
+    end)
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
+  else
+    f = CreateFrame("Frame", "MrMythicalVaultAdvisorPopup", UIParent, "BackdropTemplate")
+    f:SetSize(300, 132)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetBackdrop({
+      bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+      edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 14,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0.08, 0.07, 0.12, 0.97)
+    f:SetBackdropBorderColor(0.55, 0.35, 0.85, 1)
 
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -12)
-  title:SetText("Great Vault")
-  title:SetTextColor(0.9, 0.78, 1)
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -12)
+    title:SetText("Great Vault")
+    title:SetTextColor(0.9, 0.78, 1)
+    f.Title = title
 
-  local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
-  closeBtn:SetScript("OnClick", function()
-    f:Hide()
-  end)
+    local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function()
+      f:Hide()
+    end)
+  end
+
+  local title = f.Title
 
   local swapHint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   swapHint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
@@ -155,13 +179,15 @@ local function ensureVaultPopup()
   resultDelta:SetJustifyH("LEFT")
   f.resultDelta = resultDelta
 
-  local advisorBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  advisorBtn:SetSize(130, 22)
+  local advisorBtn = NS.createUIButton(f, {
+    text = "Gearing Dashboard",
+    width = 130,
+    height = 22,
+    onClick = function()
+      NS.openGearAdvisor(nil, "bags")
+    end,
+  })
   advisorBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 8)
-  advisorBtn:SetText("Gearing Dashboard")
-  advisorBtn:SetScript("OnClick", function()
-    NS.openGearAdvisor(nil, "bags")
-  end)
   f.advisorBtn = advisorBtn
 
   vaultPopup = f

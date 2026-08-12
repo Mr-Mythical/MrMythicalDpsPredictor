@@ -77,6 +77,7 @@ Great Vault window with the addon recommending the highest-DPS reward
 
 This is a fast estimator, not a SimulationCraft replacement.
 
+- Predictions use permanent stats from equipped item links, including socketed gems and static enchant bonuses; active raid buffs and temporary procs are deliberately excluded from model inputs
 - Rotations, trinket procs, and set bonus mechanics are not simulated
 - **Trinkets are not supported.** The model assumes best-in-slot trinkets, and trinket slots are excluded from predictions
 

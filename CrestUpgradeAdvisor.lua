@@ -136,6 +136,25 @@ local function renderLitePlan()
 
   for _, step in ipairs(litePlan) do
     local isActive = liteActiveInvSlot and step.inv_slot and step.inv_slot == liteActiveInvSlot
+    local iconLink = step.preview_link or step.link
+    local iconTexture = iconLink and GetItemIcon(iconLink) or nil
+    local itemName = step.preview_name or step.name or ""
+    local nameLine
+    if itemName ~= "" then
+      nameLine = string.format("#%d %s - %s", step.order or 0, step.slot_label or "", itemName)
+    else
+      nameLine = string.format("#%d %s", step.order or 0, step.slot_label or "")
+    end
+    local costLabel = step.crest_label
+    if NS.formatCrestCostCompact then
+      costLabel = NS.formatCrestCostCompact(step.crest_cost, step.crest_cost_base, step.currency_id, step.crest_discounted)
+    end
+    costLabel = costLabel or tostring(step.crest_cost or 0)
+    local dpsLabel = NS.formatDelta(step.dps_delta or 0) .. " DPS"
+    local nameColor = isActive and { 0.55, 1, 0.65 } or { 0.62, 0.66, 0.7 }
+
+    -- Keep the hand-laid row: cost/DPS sit on the right in a stack and fit LITE_WIDTH.
+    -- CreateDataRow's left-to-right columns overflow this narrow panel.
     local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
     table.insert(liteRows, row)
     row:SetSize(listWidth, LITE_ROW_H - 4)
@@ -162,12 +181,10 @@ local function renderLitePlan()
     iconBtn:SetPoint("LEFT", row, "LEFT", leftPad, 0)
     local iconTex = iconBtn:CreateTexture(nil, "ARTWORK")
     iconTex:SetAllPoints(iconBtn)
-    local iconLink = step.preview_link or step.link
+    if iconTexture then
+      iconTex:SetTexture(iconTexture)
+    end
     if iconLink then
-      local iconTexture = GetItemIcon(iconLink)
-      if iconTexture then
-        iconTex:SetTexture(iconTexture)
-      end
       iconBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetHyperlink(iconLink)
@@ -183,13 +200,8 @@ local function renderLitePlan()
     stepBadge:SetWidth(textWidth)
     stepBadge:SetJustifyH("LEFT")
     stepBadge:SetWordWrap(false)
-    local itemName = step.preview_name or step.name or ""
-    if itemName ~= "" then
-      stepBadge:SetText(string.format("#%d %s - %s", step.order or 0, step.slot_label or "", itemName))
-    else
-      stepBadge:SetText(string.format("#%d %s", step.order or 0, step.slot_label or ""))
-    end
-    stepBadge:SetTextColor(isActive and 0.55 or 0.62, isActive and 1 or 0.66, isActive and 0.65 or 0.7)
+    stepBadge:SetText(nameLine)
+    stepBadge:SetTextColor(nameColor[1], nameColor[2], nameColor[3])
 
     local upgradeLine = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     upgradeLine:SetPoint("TOPLEFT", row, "TOPLEFT", textLeft, -20)
@@ -214,11 +226,7 @@ local function renderLitePlan()
     costText:SetWidth(COST_COL_W - 18)
     costText:SetJustifyH("RIGHT")
     costText:SetWordWrap(false)
-    local costLabel = step.crest_label
-    if NS.formatCrestCostCompact then
-      costLabel = NS.formatCrestCostCompact(step.crest_cost, step.crest_cost_base, step.currency_id, step.crest_discounted)
-    end
-    costText:SetText(costLabel or tostring(step.crest_cost or 0))
+    costText:SetText(costLabel)
     NS.setCrestCostTextColor(costText, step)
 
     local dpsText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -226,7 +234,7 @@ local function renderLitePlan()
     dpsText:SetWidth(DPS_COL_W)
     dpsText:SetJustifyH("RIGHT")
     dpsText:SetWordWrap(false)
-    dpsText:SetText(NS.formatDelta(step.dps_delta or 0) .. " DPS")
+    dpsText:SetText(dpsLabel)
     NS.setDpsDeltaTextColor(dpsText, step.dps_delta)
 
     yOffset = yOffset + LITE_ROW_H
@@ -234,6 +242,9 @@ local function renderLitePlan()
 
   local contentHeight = math.max(LITE_SCROLL_H, yOffset + 4)
   itemList:SetHeight(contentHeight)
+  if litePanel.scrollFrame and litePanel.scrollFrame._UpdateScrollRange then
+    litePanel.scrollFrame:_UpdateScrollRange()
+  end
 end
 
 local function ensureLitePanel()
@@ -241,31 +252,61 @@ local function ensureLitePanel()
     return litePanel
   end
 
-  local f = CreateFrame("Frame", "MrMythicalCrestUpgradeLite", UIParent, "BackdropTemplate")
-  f:SetSize(LITE_WIDTH, 112 + LITE_SCROLL_H)
-  f:SetFrameStrata("FULLSCREEN_DIALOG")
-  f:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 12,
-    insets = { left = 3, right = 3, top = 3, bottom = 3 },
-  })
-  f:SetBackdropColor(0.07, 0.09, 0.08, 0.97)
-  f:SetBackdropBorderColor(0.28, 0.55, 0.38, 0.95)
-  f:Hide()
-
-  local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
-  closeBtn:SetScript("OnClick", function()
+  local Lib = NS.getUILib and NS.getUILib() or nil
+  local f
+  if Lib then
+    f = Lib:CreatePanel(UIParent, {
+      name = "MrMythicalCrestUpgradeLite",
+      title = NS.MSG_CREST_LITE_TITLE,
+      width = LITE_WIDTH,
+      height = 112 + LITE_SCROLL_H,
+      frameStrata = "FULLSCREEN_DIALOG",
+    })
     f:Hide()
-  end)
+    local closeBtn = Lib:CreateCloseButton(f, function()
+      f:Hide()
+    end)
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
+    f.CloseButton = closeBtn
+    if f.Title then
+      f.Title:ClearAllPoints()
+      f.Title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -10)
+      f.Title:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
+      f.Title:SetJustifyH("LEFT")
+      f.Title:SetFontObject("GameFontNormal")
+      f.Title:SetTextColor(0.55, 1, 0.65)
+    end
+  else
+    f = CreateFrame("Frame", "MrMythicalCrestUpgradeLite", UIParent, "BackdropTemplate")
+    f:SetSize(LITE_WIDTH, 112 + LITE_SCROLL_H)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetBackdrop({
+      bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+      edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 12,
+      insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    f:SetBackdropColor(0.07, 0.09, 0.08, 0.97)
+    f:SetBackdropBorderColor(0.28, 0.55, 0.38, 0.95)
+    f:Hide()
 
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -10)
-  title:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
-  title:SetJustifyH("LEFT")
-  title:SetText(NS.MSG_CREST_LITE_TITLE)
-  title:SetTextColor(0.55, 1, 0.65)
+    local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function()
+      f:Hide()
+    end)
+    f.CloseButton = closeBtn
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -10)
+    title:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
+    title:SetJustifyH("LEFT")
+    title:SetText(NS.MSG_CREST_LITE_TITLE)
+    title:SetTextColor(0.55, 1, 0.65)
+    f.Title = title
+  end
+
+  local title = f.Title
 
   local brand = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   brand:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -1)
@@ -286,25 +327,41 @@ local function ensureLitePanel()
   statusText:SetWordWrap(true)
   f.statusText = statusText
 
-  local scrollFrame = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-  scrollFrame:SetPoint("TOPLEFT", balanceBar, "BOTTOMLEFT", -4, -6)
-  scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -28, 36)
+  local scrollFrame
+  local itemList
+  if Lib then
+    scrollFrame = Lib:CreateScrollFrame(f, {
+      width = LITE_WIDTH - 40,
+      height = LITE_SCROLL_H,
+    })
+    scrollFrame:ClearAllPoints()
+    scrollFrame:SetPoint("TOPLEFT", balanceBar, "BOTTOMLEFT", -4, -6)
+    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -28, 36)
+    itemList = CreateFrame("Frame", nil, scrollFrame)
+    itemList:SetSize(LITE_WIDTH - 52, LITE_SCROLL_H)
+    scrollFrame:SetScrollChild(itemList)
+  else
+    scrollFrame = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", balanceBar, "BOTTOMLEFT", -4, -6)
+    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -28, 36)
+    itemList = CreateFrame("Frame", nil, scrollFrame)
+    itemList:SetSize(LITE_WIDTH - 40, LITE_SCROLL_H)
+    scrollFrame:SetScrollChild(itemList)
+  end
   f.scrollFrame = scrollFrame
-
-  local itemList = CreateFrame("Frame", nil, scrollFrame)
-  itemList:SetSize(LITE_WIDTH - 40, LITE_SCROLL_H)
-  scrollFrame:SetScrollChild(itemList)
   f.itemList = itemList
 
-  local advisorBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  advisorBtn:SetSize(140, 22)
+  local advisorBtn = NS.createUIButton(f, {
+    text = NS.MSG_CREST_LITE_OPEN_ADVISOR,
+    width = 140,
+    height = 22,
+    onClick = function()
+      if NS.openGearAdvisor then
+        NS.openGearAdvisor(nil, "crests")
+      end
+    end,
+  })
   advisorBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 10, 8)
-  advisorBtn:SetText(NS.MSG_CREST_LITE_OPEN_ADVISOR)
-  advisorBtn:SetScript("OnClick", function()
-    if NS.openGearAdvisor then
-      NS.openGearAdvisor(nil, "crests")
-    end
-  end)
   f.advisorBtn = advisorBtn
 
   litePanel = f

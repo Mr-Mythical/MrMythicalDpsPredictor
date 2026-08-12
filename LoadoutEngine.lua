@@ -1019,7 +1019,8 @@ function NS.makeCandidateFromGearRef(ref)
     cand.key = string.format("crest:%d:%s", itemID, rank)
   elseif ref.source == "loot" and itemID then
     local journalId = ref.instance_id or 0
-    cand.key = string.format("loot:%d:%d", journalId, itemID)
+    local encounterKey = ref.encounter_id or "none"
+    cand.key = string.format("loot:%d:%d:%s", journalId, itemID, tostring(encounterKey))
   elseif ref.source == "bag" then
     if cand.guid then
       cand.key = "guid:" .. tostring(cand.guid)
@@ -1054,6 +1055,9 @@ function NS.makeCandidateFromGearRef(ref)
   cand.journal_link = ref.journal_link or (ref.source == "loot" and ref.link ~= scoreLink and ref.link) or nil
   cand.instance_id = ref.instance_id
   cand.instance_name = ref.instance_name
+  cand.instance_kind = ref.instance_kind
+  cand.encounter_id = ref.encounter_id
+  cand.encounter_name = ref.encounter_name
   cand.dps_delta = ref.dps_delta
   cand.is_upgrade = ref.is_upgrade
   cand.slot_id = ref.slot_id or cand.slot_id
@@ -2059,7 +2063,24 @@ function NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
   local nonWeaponSlotOrder = BAG_NONWEAPON_SLOT_ORDER
   local pruneRules = buildLoadoutPruneRules(equippedBySlot, slotCandidates, nonWeaponSlotOrder)
 
-  local baseStats = NS.getPlayerStatVector()
+  local baseStats, baseStatsError = NS.getPlayerStatVector()
+  if not baseStats then
+    local attempt = (tonumber(opts.gear_stats_retry_count) or 0) + 1
+    if attempt <= MAX_LOADOUT_ITEM_DATA_RETRIES then
+      opts.gear_stats_retry_count = attempt
+      C_Timer.After(LOADOUT_ITEM_DATA_RETRY_DELAY, function()
+        if runner.cancelled then
+          completeCancelled()
+        else
+          NS.runBestLoadoutScan(specKey, candidatesBySlot, opts, onComplete)
+        end
+      end)
+    elseif onComplete then
+      onComplete(false, baseStatsError or "Equipped item data did not finish loading.")
+    end
+    return
+  end
+  opts.gear_stats_retry_count = nil
   local basePred = NS.getCachedBaseDps(baseStats, specKey)
   if NS.resetStatDeltaStats then
     NS.resetStatDeltaStats()

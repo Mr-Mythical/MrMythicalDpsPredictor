@@ -343,7 +343,7 @@ end
 
 local function refreshPredictionContext(context)
   context.generation = NS.predictionContextGeneration or 0
-  context.baseStats = NS.getPlayerStatVector()
+  context.baseStats, context.baseStatsError = NS.getPlayerStatVector()
   context.basePredBySpec = {}
   context.equippedRefs = {}
   context.ownedWeaponCandidates = nil
@@ -385,10 +385,16 @@ end
 
 local function getContextBase(context, specKey)
   if not context then
-    local baseStats = NS.getPlayerStatVector()
+    local baseStats, baseStatsError = NS.getPlayerStatVector()
+    if not baseStats then
+      return nil, nil, baseStatsError or "equipped gear stats unavailable"
+    end
     return baseStats, NS.getCachedBaseDps(baseStats, specKey)
   end
   ensurePredictionContext(context)
+  if not context.baseStats then
+    return nil, nil, context.baseStatsError or "equipped gear stats unavailable"
+  end
   local basePred = context.basePredBySpec[specKey]
   if basePred == nil then
     basePred = NS.getCachedBaseDps(context.baseStats, specKey)
@@ -585,7 +591,10 @@ function NS.computeWeaponPairDpsDelta(mhCand, ohCand, eqMh, eqOh, specKey, conte
   if not specKey or not NS.computeWeaponLoadoutDelta then
     return nil
   end
-  local baseStats, basePred = getContextBase(context, specKey)
+  local baseStats, basePred, baseStatsError = getContextBase(context, specKey)
+  if not baseStats then
+    return nil, baseStatsError
+  end
   local out = context and context.weaponDeltaStats or nil
   local wdelta = NS.computeWeaponLoadoutDelta(mhCand, ohCand, eqMh, eqOh, specKey, out)
   local stats = statsWithDelta(baseStats, wdelta, context)
@@ -995,7 +1004,10 @@ local function evaluateItem(itemRef, specKey, context)
     return nil, "unknown equip slot"
   end
 
-  local base, basePred = getContextBase(context, specKey)
+  local base, basePred, baseStatsError = getContextBase(context, specKey)
+  if not base then
+    return nil, baseStatsError
+  end
   if isWeaponEquipLoc(candidateEquipLoc) then
     local candidateGuid = type(itemRef) == "table" and (itemRef.guid or itemRef.itemGUID) or nil
     if not candidateGuid and NS.resolveOwnedItemRef then
@@ -1104,8 +1116,12 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey, context
   context = ensurePredictionContext(context or createPredictionContext())
   local _, classToken = UnitClass("player")
   local baseStats, basePred = getContextBase(context, specKey)
+  if not baseStats then
+    return
+  end
   local eqMh = equippedCandidateForSlot(16, context)
   local eqOh = equippedCandidateForSlot(17, context)
+  local eqIs2H = eqMh and eqMh.link and is2HWeapon(eqMh.link)
 
   local ohOptions = {}
   local mhOptions = {}
@@ -1150,6 +1166,7 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey, context
     end
 
     local bestDelta
+    local pairScored = false
     if slotId == 16 and is2HWeapon(cand.link) then
       if not loadout.two_handed then
         return
@@ -1170,24 +1187,46 @@ function NS.applyPairedWeaponCandidateScoring(candidatesBySlot, specKey, context
       if not loadout.dual_wield then
         return
       end
-      bestDelta = bestMainHandPairDelta(
-        cand, ohOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
-      )
+      if eqIs2H then
+        -- Switching off a 2H: score best MH+OH pair.
+        bestDelta = bestMainHandPairDelta(
+          cand, ohOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
+        )
+        pairScored = true
+      else
+        -- Already MH+OH (or 1H with empty OH): single-slot MH swap, keep current OH.
+        bestDelta = weaponLoadoutDpsDelta(
+          cand, eqOh, eqMh, eqOh, specKey, baseStats, basePred, context
+        )
+      end
     elseif slotId == 17 then
       if not loadout.dual_wield then
         return
       end
-      bestDelta = bestOffHandPairDelta(
-        cand, mhOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
-      )
+      if eqIs2H then
+        -- Switching off a 2H: score best MH partner for this OH.
+        bestDelta = bestOffHandPairDelta(
+          cand, mhOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
+        )
+        pairScored = true
+      elseif eqMh then
+        -- Already dual-wielding: single-slot OH swap, keep current MH.
+        bestDelta = weaponLoadoutDpsDelta(
+          eqMh, cand, eqMh, eqOh, specKey, baseStats, basePred, context
+        )
+      else
+        bestDelta = bestOffHandPairDelta(
+          cand, mhOptions, eqMh, eqOh, classToken, specKey, loadout, baseStats, basePred, context
+        )
+        pairScored = true
+      end
     end
 
     if bestDelta ~= nil then
       cand.dps_delta = bestDelta
       cand.is_upgrade = bestDelta > 0.5
       if slotId == 16 or slotId == 17 then
-        local is2H = slotId == 16 and cand.link and is2HWeapon(cand.link)
-        cand.weapon_pair_scored = loadout.dual_wield and not is2H
+        cand.weapon_pair_scored = pairScored
       end
     end
   end

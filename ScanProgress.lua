@@ -179,38 +179,81 @@ local function createScanProgressFrame()
     return scanProgressFrame
   end
 
-  local f = CreateFrame("Frame", "MrMythicalDpsScanProgressFrame", UIParent, "BackdropTemplate")
-  f:SetSize(SCAN_POPUP_WIDTH, SCAN_POPUP_HEIGHT)
-  f:SetFrameStrata("DIALOG")
-  f:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 },
-  })
-  f:SetBackdropColor(0.08, 0.08, 0.1, 0.96)
-  f:SetBackdropBorderColor(0.45, 0.45, 0.55, 1)
-  f:SetMovable(true)
-  f:EnableMouse(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving)
+  local Lib = NS.getUILib and NS.getUILib() or nil
+  local f
+  if Lib then
+    f = Lib:CreatePanel(UIParent, {
+      name = "MrMythicalDpsScanProgressFrame",
+      title = "Scan in progress",
+      width = SCAN_POPUP_WIDTH,
+      height = SCAN_POPUP_HEIGHT,
+      movable = true,
+      frameStrata = "DIALOG",
+    })
+    if f.Title then
+      f.Title:ClearAllPoints()
+      f.Title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+      f.Title:SetTextColor(1, 0.92, 0.55)
+      f.Title:SetFontObject("GameFontNormal")
+    end
+  else
+    f = CreateFrame("Frame", "MrMythicalDpsScanProgressFrame", UIParent, "BackdropTemplate")
+    f:SetSize(SCAN_POPUP_WIDTH, SCAN_POPUP_HEIGHT)
+    f:SetFrameStrata("DIALOG")
+    f:SetBackdrop({
+      bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+      edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 16,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0.08, 0.08, 0.1, 0.96)
+    f:SetBackdropBorderColor(0.45, 0.45, 0.55, 1)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    title:SetText("Scan in progress")
+    title:SetTextColor(1, 0.92, 0.55)
+    f.Title = title
+  end
+
   f:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
     local point, _, relPoint, x, y = self:GetPoint(1)
     MR_MYTHICAL_DPS_CONFIG.scan_progress_point = { point, relPoint, x, y }
   end)
-
-  if MR_MYTHICAL_DPS_CONFIG.scan_progress_point then
+  if Lib and Lib.RegisterMovable then
+    Lib:RegisterMovable(f, {
+      get = function()
+        local p = MR_MYTHICAL_DPS_CONFIG.scan_progress_point
+        if not p then
+          return nil
+        end
+        return { point = p[1], relativePoint = p[2], x = p[3], y = p[4] }
+      end,
+      set = function(pos)
+        MR_MYTHICAL_DPS_CONFIG.scan_progress_point = {
+          pos.point,
+          pos.relativePoint or pos.point,
+          pos.x or 0,
+          pos.y or 0,
+        }
+      end,
+    })
+    if not f:GetPoint() then
+      f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -120)
+    end
+  elseif MR_MYTHICAL_DPS_CONFIG.scan_progress_point then
     local p = MR_MYTHICAL_DPS_CONFIG.scan_progress_point
     f:SetPoint(p[1], UIParent, p[2], p[3], p[4])
   else
     f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -120)
   end
 
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
-  title:SetText("Scan in progress")
-  title:SetTextColor(1, 0.92, 0.55)
+  local title = f.Title
 
   local scanTypeText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   scanTypeText:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
@@ -225,20 +268,19 @@ local function createScanProgressFrame()
   statusText:SetHeight(44)
   f.statusText = statusText
 
-  local progressBar = CreateFrame("StatusBar", nil, f)
+  local progressBar = NS.createUIStatusBar(f, {
+    width = SCAN_POPUP_WIDTH - 28,
+    height = 14,
+    showLabel = false,
+  })
+  progressBar:ClearAllPoints()
   progressBar:SetPoint("TOPLEFT", statusText, "BOTTOMLEFT", 0, -8)
   progressBar:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, 0)
   progressBar:SetHeight(14)
-  progressBar:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar")
-  progressBar:SetStatusBarColor(0.45, 0.85, 0.55)
   progressBar:SetMinMaxValues(0, 1)
   progressBar:SetValue(0)
   progressBar:Hide()
   f.progressBar = progressBar
-
-  local progressBg = progressBar:CreateTexture(nil, "BACKGROUND")
-  progressBg:SetAllPoints(progressBar)
-  progressBg:SetColorTexture(0.12, 0.12, 0.16, 0.9)
 
   local progressLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   progressLabel:SetPoint("TOP", progressBar, "BOTTOM", 0, -2)
@@ -252,37 +294,43 @@ local function createScanProgressFrame()
   timerText:Hide()
   f.timerText = timerText
 
-  local showDashboardBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  showDashboardBtn:SetSize(110, 24)
+  local showDashboardBtn = NS.createUIButton(f, {
+    text = "Show Dashboard",
+    width = 110,
+    height = 24,
+    onClick = function()
+      NS.openGearAdvisor()
+    end,
+  })
   showDashboardBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 12)
-  showDashboardBtn:SetText("Show Dashboard")
-  showDashboardBtn:SetScript("OnClick", function()
-    NS.openGearAdvisor()
-  end)
   f.showDashboardBtn = showDashboardBtn
 
-  local scanModeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  scanModeBtn:SetSize(132, 24)
+  local scanModeBtn = NS.createUIButton(f, {
+    width = 132,
+    height = 24,
+    onClick = function()
+      local hh = handlers()
+      if hh.onTogglePerformance then
+        hh.onTogglePerformance()
+      end
+    end,
+  })
   scanModeBtn:SetPoint("BOTTOM", f, "BOTTOM", 0, 12)
-  scanModeBtn:SetScript("OnClick", function()
-    local hh = handlers()
-    if hh.onTogglePerformance then
-      hh.onTogglePerformance()
-    end
-  end)
   scanModeBtn:Hide()
   f.scanModeBtn = scanModeBtn
 
-  local stopBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  stopBtn:SetSize(90, 24)
+  local stopBtn = NS.createUIButton(f, {
+    text = "Stop Scan",
+    width = 90,
+    height = 24,
+    onClick = function()
+      local hh = handlers()
+      if hh.onStopScan then
+        hh.onStopScan()
+      end
+    end,
+  })
   stopBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -14, 12)
-  stopBtn:SetText("Stop Scan")
-  stopBtn:SetScript("OnClick", function()
-    local hh = handlers()
-    if hh.onStopScan then
-      hh.onStopScan()
-    end
-  end)
   f.stopBtn = stopBtn
 
   f:Hide()
