@@ -275,27 +275,28 @@ do
     end
 
     local extraLines = collectOwnerExtraLines(tooltip)
-    local specKeys = NS.getTooltipProfileKeys()
-    if not specKeys or #specKeys == 0 then
-      if extraLines and #extraLines > 0 then
-        appendUnifiedBlock(tooltip, "extra|" .. extraLinesBlockSuffix(extraLines), extraLines)
-      elseif not NS._didWarnNoProfileTooltip then
-        NS._didWarnNoProfileTooltip = true
-        appendUnifiedBlock(tooltip, "no-profile", {
-          { text = NS.MSG_NO_PROFILE_LABEL, r = 0.55, g = 0.55, b = 0.55 },
-        })
-      end
-      return
-    end
-
-    if not NS.profileDetectionDoneRef[1] and #NS.active_spec_keys == 0 then
+    if not NS.profileDetectionDoneRef[1] then
       NS.detectAndCacheProfiles()
     end
 
-    specKeys = NS.getTooltipProfileKeys()
+    local specKeys = NS.getTooltipProfileKeys()
     if not specKeys or #specKeys == 0 then
-      if extraLines and #extraLines > 0 then
-        appendUnifiedBlock(tooltip, "extra|" .. extraLinesBlockSuffix(extraLines), extraLines)
+      local label, _, availability = NS.getInactiveProfileCopy()
+      local isUnsupported = availability == "unsupported" or availability == "healer"
+      local lines = {}
+      if isUnsupported then
+        lines[#lines + 1] = { text = label, r = 1, g = 0.6, b = 0.4 }
+      elseif not NS._didWarnNoProfileTooltip then
+        NS._didWarnNoProfileTooltip = true
+        lines[#lines + 1] = { text = label, r = 0.55, g = 0.55, b = 0.55 }
+      end
+      if extraLines then
+        for _, line in ipairs(extraLines) do
+          lines[#lines + 1] = line
+        end
+      end
+      if #lines > 0 then
+        appendUnifiedBlock(tooltip, isUnsupported and "unsupported-spec" or "no-profile", lines)
       end
       return
     end

@@ -78,6 +78,7 @@ end
 
 function NS.detectAndCacheProfiles()
   NS.profileDetectionDoneRef[1] = true
+  NS._didWarnNoProfileTooltip = nil
   local _, classToken = UnitClass("player")
   local specIndex = GetSpecialization()
   if not classToken or not specIndex then
@@ -114,6 +115,57 @@ function NS.detectAndCacheProfiles()
 
   NS.active_spec_prefix = prefix
   NS.active_spec_keys = matches
+end
+
+function NS.hasModeledProfiles()
+  return NS.active_spec_keys and #NS.active_spec_keys > 0
+end
+
+local function getPlayerSpecName()
+  local specIndex = GetSpecialization and GetSpecialization()
+  if not specIndex or not GetSpecializationInfo then
+    return nil
+  end
+  local _, specName = GetSpecializationInfo(specIndex)
+  if specName and specName ~= "" then
+    return specName
+  end
+  return nil
+end
+
+function NS.getProfileAvailability()
+  if NS.getActiveProfileKey() then
+    return "ready"
+  end
+  if NS.hasModeledProfiles() then
+    return "needs_profile"
+  end
+  local specIndex = GetSpecialization and GetSpecialization()
+  if not specIndex then
+    return "pending"
+  end
+  local role = GetSpecializationRole and GetSpecializationRole(specIndex)
+  if role == "HEALER" then
+    return "healer"
+  end
+  return "unsupported"
+end
+
+function NS.getInactiveProfileCopy()
+  local availability = NS.getProfileAvailability()
+  if availability == "unsupported" then
+    local specName = getPlayerSpecName()
+    if specName then
+      return specName .. " isn't supported yet",
+        specName .. " isn't in the model yet. SimulationCraft support is still incomplete.",
+        availability
+    end
+    return NS.MSG_SPEC_UNSUPPORTED_LABEL, NS.MSG_SPEC_UNSUPPORTED_ACTION, availability
+  end
+  if availability == "healer" then
+    return NS.MSG_HEALER_UNSUPPORTED_LABEL, NS.MSG_HEALER_UNSUPPORTED_ACTION, availability
+  end
+  return NS.MSG_NO_PROFILE_LABEL, NS.MSG_NO_PROFILE_ACTION, availability
 end
 
 local function normalizeHeroToken(name)

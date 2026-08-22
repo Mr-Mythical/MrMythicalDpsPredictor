@@ -1029,7 +1029,8 @@ function NS.Predictor.PredictItemDelta(itemRef, specKey, context)
     return nil, "missing item link"
   end
   if not specKey or specKey == "" then
-    return nil, NS.MSG_NO_PROFILE_ACTION
+    local _, action = NS.getInactiveProfileCopy()
+    return nil, action
   end
 
   local pred, err = evaluateItem(itemRef, specKey, context)

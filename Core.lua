@@ -619,6 +619,10 @@ NS.LOADOUT_ROW_ALREADY_OPTIMAL = "Already optimal"
 
 NS.MSG_NO_PROFILE_LABEL = "No profile — " .. NS.DASHBOARD_SLASH
 NS.MSG_NO_PROFILE_ACTION = "Select a profile in " .. NS.DASHBOARD_SLASH .. "."
+NS.MSG_SPEC_UNSUPPORTED_LABEL = "Spec not supported yet"
+NS.MSG_SPEC_UNSUPPORTED_ACTION = "This spec isn't in the model yet. SimulationCraft support is still incomplete."
+NS.MSG_HEALER_UNSUPPORTED_LABEL = "Healer specs aren't supported"
+NS.MSG_HEALER_UNSUPPORTED_ACTION = "This addon is for DPS and tank specs only."
 NS.MSG_FIND_LOADOUT_HINT = "Toggle items, then Run Scan."
 NS.MSG_LOOT_MODE_HINT = "Pick instance & track, then choose Farm priority or BiS Scan."
 NS.MSG_FARM_PRIORITY_HINT = "Boss EV from single-swap estimates (equal drop chance)."
@@ -1250,6 +1254,9 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
     NS.detectAndCacheProfiles()
     NS.tryAutoMatchProfile()
     NS.onProfileContextChanged()
+    if NS.refreshGearAdvisorAfterSpecChange then
+      NS.refreshGearAdvisorAfterSpecChange()
+    end
     if NS.openGearAdvisor and #NS.active_spec_keys > 1 and not NS.getActiveProfileKey() then
       NS.openGearAdvisor(nil, nil, true)
     end

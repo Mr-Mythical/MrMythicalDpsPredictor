@@ -38,35 +38,43 @@ local modeScanCache = {}
 local isAdvisorScanActive
 local isLoadoutSearchActive
 
-local VAULT_BORDER = { 0.62, 0.38, 0.95 }
-local VAULT_BORDER_SELECTED = { 0.82, 0.58, 1 }
-local VAULT_WINNER_BORDER = { 1, 0.85, 0.25 }
+local VAULT = {
+  BORDER = { 0.62, 0.38, 0.95 },
+  BORDER_SELECTED = { 0.82, 0.58, 1 },
+  WINNER_BORDER = { 1, 0.85, 0.25 },
+}
 
-local GA_WIDTH = 920
-local GA_HEIGHT = 700
-local GA_PADDING = 10
-local GA_SCROLL_INSET = 42
 -- Chrome control scale: one height for buttons, tabs, checkboxes, dropdowns.
-local GA_CTRL_H = 24
-local GA_ACTION_H = 36
-local GA_FILTER_ROW_H = 32
-local GA_MODE_BAR_H = 30
-local GA_STATUS_H = 22
-local GA_HEADER_H = 18
-local GA_LOADOUT_CURRENT_X = 100
-local GA_LOADOUT_REC_X = 380
-local GA_LOADOUT_ITEM_ICON = 22
-local GA_CREST_CURRENT_X = 100
-local GA_CREST_STEP_X = 248
-local GA_CREST_STEP_WIDTH = 178
-local GA_CREST_AFTER_X = GA_CREST_STEP_X + GA_CREST_STEP_WIDTH + 8
-local GA_CREST_ROW_H = 36
-local GA_CREST_DPS_RIGHT = 8
-local GA_CREST_DPS_WIDTH = 120
-local GA_CREST_COST_WIDTH = 140
-local GA_CREST_COL_GAP = 10
-local GA_CREST_COST_RIGHT = GA_CREST_DPS_RIGHT + GA_CREST_DPS_WIDTH + GA_CREST_COL_GAP
-local LOOT_COLLECT_BATCH = 2
+local GA = {
+  WIDTH = 920,
+  HEIGHT = 700,
+  PADDING = 10,
+  SCROLL_INSET = 42,
+  CTRL_H = 24,
+  ACTION_H = 36,
+  FILTER_ROW_H = 32,
+  MODE_BAR_H = 30,
+  STATUS_H = 22,
+  HEADER_H = 18,
+  LOADOUT_CURRENT_X = 100,
+  LOADOUT_REC_X = 380,
+  LOADOUT_ITEM_ICON = 22,
+  CREST_CURRENT_X = 100,
+  CREST_STEP_X = 248,
+  CREST_STEP_WIDTH = 178,
+  CREST_ROW_H = 36,
+  CREST_DPS_RIGHT = 8,
+  CREST_DPS_WIDTH = 120,
+  CREST_COST_WIDTH = 140,
+  CREST_COL_GAP = 10,
+  ICON_SIZE = 32,
+  ICON_SPACING = 6,
+  SLOT_COL_WIDTH = 100,
+  ICONS_COL_X = 112,
+  LOOT_COLLECT_BATCH = 2,
+}
+GA.CREST_AFTER_X = GA.CREST_STEP_X + GA.CREST_STEP_WIDTH + 8
+GA.CREST_COST_RIGHT = GA.CREST_DPS_RIGHT + GA.CREST_DPS_WIDTH + GA.CREST_COL_GAP
 
 local function setupAdvisorCheckbox(check, label, allowWrap)
   if check.SetLabel then
@@ -109,14 +117,14 @@ local function layoutUpgradeFilterChecks()
   if not frame:IsShown() then
     return
   end
-  frame:SetHeight(GA_FILTER_ROW_H)
+  frame:SetHeight(GA.FILTER_ROW_H)
 
   local upgradesOnly = advisorFrame.upgradesOnlyCheck
   local sidegrade = advisorFrame.sidegradeCheck
   if upgradesOnly then
     upgradesOnly:ClearAllPoints()
     upgradesOnly:SetPoint("LEFT", frame, "LEFT", 10, 0)
-    upgradesOnly:SetSize(150, GA_CTRL_H)
+    upgradesOnly:SetSize(150, GA.CTRL_H)
     if upgradesOnly.Label then
       upgradesOnly.Label:ClearAllPoints()
       local box = upgradesOnly.BoxBorder or upgradesOnly
@@ -133,7 +141,7 @@ local function layoutUpgradeFilterChecks()
     else
       sidegrade:SetPoint("LEFT", frame, "LEFT", 10, 0)
     end
-    sidegrade:SetSize(180, GA_CTRL_H)
+    sidegrade:SetSize(180, GA.CTRL_H)
     if sidegrade.Label then
       sidegrade.Label:ClearAllPoints()
       local box = sidegrade.BoxBorder or sidegrade
@@ -164,19 +172,19 @@ local function layoutAdvisorChrome()
     farmBar:ClearAllPoints()
     farmBar:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
     farmBar:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
-    farmBar:SetHeight(GA_FILTER_ROW_H)
+    farmBar:SetHeight(GA.FILTER_ROW_H)
   end
 
   if filterRow then
     filterRow:ClearAllPoints()
     filterRow:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
     filterRow:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
-    filterRow:SetHeight(GA_FILTER_ROW_H)
+    filterRow:SetHeight(GA.FILTER_ROW_H)
   end
 
   header:ClearAllPoints()
-  header:SetPoint("LEFT", advisorFrame, "LEFT", GA_PADDING, 0)
-  header:SetPoint("RIGHT", advisorFrame, "RIGHT", -GA_SCROLL_INSET, 0)
+  header:SetPoint("LEFT", advisorFrame, "LEFT", GA.PADDING, 0)
+  header:SetPoint("RIGHT", advisorFrame, "RIGHT", -GA.SCROLL_INSET, 0)
   if showFarm and farmBar then
     header:SetPoint("TOP", farmBar, "BOTTOM", 0, -2)
   elseif showFilters and filterRow then
@@ -185,11 +193,6 @@ local function layoutAdvisorChrome()
     header:SetPoint("TOP", actionBar, "BOTTOM", 0, -2)
   end
 end
-
-local GA_ICON_SIZE = 32
-local GA_ICON_SPACING = 6
-local GA_SLOT_COL_WIDTH = 100
-local GA_ICONS_COL_X = 112
 
 local SOURCE_LABELS = {
   bag = "Bags",
@@ -453,7 +456,7 @@ end
 
 local function addLoadoutItemBlock(row, startX, link, name, quality, maxNameWidth, muted, opts)
   opts = opts or {}
-  local iconSize = GA_LOADOUT_ITEM_ICON
+  local iconSize = GA.LOADOUT_ITEM_ICON
   local iconBtn
   if opts.vaultBorder then
     iconBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
@@ -463,13 +466,13 @@ local function addLoadoutItemBlock(row, startX, link, name, quality, maxNameWidt
       tile = true, tileSize = 8, edgeSize = 10,
       insets = { left = 2, right = 2, top = 2, bottom = 2 },
     })
-    local br, bg, bb = VAULT_BORDER[1], VAULT_BORDER[2], VAULT_BORDER[3]
+    local br, bg, bb = VAULT.BORDER[1], VAULT.BORDER[2], VAULT.BORDER[3]
     if opts.vaultWinner then
-      br, bg, bb = VAULT_WINNER_BORDER[1], VAULT_WINNER_BORDER[2], VAULT_WINNER_BORDER[3]
+      br, bg, bb = VAULT.WINNER_BORDER[1], VAULT.WINNER_BORDER[2], VAULT.WINNER_BORDER[3]
     end
     iconBtn:SetBackdropBorderColor(br, bg, bb, 1)
     iconBtn:SetBackdropColor(0, 0, 0, 0.35)
-    iconSize = GA_LOADOUT_ITEM_ICON + 4
+    iconSize = GA.LOADOUT_ITEM_ICON + 4
   else
     iconBtn = CreateFrame("Button", nil, row)
   end
@@ -791,16 +794,16 @@ end
 
 local function crestColumnRight(_listWidth, column)
   if column == "cost" then
-    return -GA_CREST_COST_RIGHT
+    return -GA.CREST_COST_RIGHT
   end
-  return -GA_CREST_DPS_RIGHT
+  return -GA.CREST_DPS_RIGHT
 end
 
 local function crestItemNameWidth(listWidth)
-  local iconPad = GA_LOADOUT_ITEM_ICON + 6
-  local rightEdge = listWidth - GA_CREST_COST_RIGHT - GA_CREST_COST_WIDTH - GA_CREST_COL_GAP
-  local afterNameMax = rightEdge - GA_CREST_AFTER_X - iconPad
-  local currentNameMax = GA_CREST_STEP_X - GA_CREST_CURRENT_X - iconPad - 6
+  local iconPad = GA.LOADOUT_ITEM_ICON + 6
+  local rightEdge = listWidth - GA.CREST_COST_RIGHT - GA.CREST_COST_WIDTH - GA.CREST_COL_GAP
+  local afterNameMax = rightEdge - GA.CREST_AFTER_X - iconPad
+  local currentNameMax = GA.CREST_STEP_X - GA.CREST_CURRENT_X - iconPad - 6
   return math.max(64, math.min(afterNameMax, currentNameMax))
 end
 
@@ -822,7 +825,7 @@ local function syncActionBarHeight()
   if not advisorFrame or not advisorFrame.actionBar then
     return
   end
-  advisorFrame.actionBar:SetHeight(GA_ACTION_H)
+  advisorFrame.actionBar:SetHeight(GA.ACTION_H)
   layoutAdvisorChrome()
 end
 
@@ -839,7 +842,7 @@ local function layoutFarmControlsRow()
   if groupCheck then
     groupCheck:ClearAllPoints()
     groupCheck:SetPoint("LEFT", bar, "LEFT", 10, 0)
-    groupCheck:SetSize(160, GA_CTRL_H)
+    groupCheck:SetSize(160, GA.CTRL_H)
     if groupCheck.Label then
       groupCheck.Label:ClearAllPoints()
       local box = groupCheck.BoxBorder or groupCheck
@@ -1133,7 +1136,21 @@ local function getActiveScanTypeLabel()
 end
 
 local function setNoProfileStatus()
-  setStatusText(NS.MSG_NO_PROFILE_ACTION, { 1, 0.6, 0.4 })
+  local _, action, availability = NS.getInactiveProfileCopy()
+  if availability == "unsupported" or availability == "healer" then
+    -- The profile callout already explains this; repeating it in the status bar
+    -- makes the same warning appear twice.
+    setStatusText("")
+    if advisorFrame and advisorFrame.statusFrame then
+      advisorFrame.statusFrame:SetHeight(1)
+    end
+    return
+  end
+  setStatusText(action, { 1, 0.6, 0.4 })
+  if advisorFrame and advisorFrame.statusFrame then
+    advisorFrame.statusFrame:SetHeight(GA.STATUS_H)
+    advisorFrame.statusFrame:Show()
+  end
 end
 
 local function comboCountWarningSuffix(count)
@@ -1326,11 +1343,15 @@ syncAdvisorStatusText = function()
   if isAdvisorScanActive() then
     return
   end
+  if not NS.getActiveProfileKey() then
+    setNoProfileStatus()
+    return
+  end
   if currentMode == "crests" then
     if advisorScanRunner then
       setStatusText(NS.MSG_CREST_SCANNING, { 0.95, 0.85, 0.45 })
       if advisorFrame.statusFrame then
-        advisorFrame.statusFrame:SetHeight(GA_STATUS_H)
+        advisorFrame.statusFrame:SetHeight(GA.STATUS_H)
         advisorFrame.statusFrame:Show()
       end
     else
@@ -1342,7 +1363,7 @@ syncAdvisorStatusText = function()
     return
   end
   if advisorFrame.statusFrame then
-    advisorFrame.statusFrame:SetHeight(GA_STATUS_H)
+    advisorFrame.statusFrame:SetHeight(GA.STATUS_H)
   end
   if isShowingLoadoutResults() and loadoutSummary then
     if next(pendingEquips) or countLoadoutEquipsByState("done") > 0 or countLoadoutEquipsByState("failed") > 0 then
@@ -1621,23 +1642,23 @@ local function syncAdvisorListHeader()
       slotHdr:SetText("Slot")
     end
     slotHdr:Show()
-    detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_CREST_CURRENT_X, 0)
+    detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA.CREST_CURRENT_X, 0)
     detailHdr:SetText(NS.LOADOUT_CURRENT_LABEL)
     detailHdr:Show()
     if advisorFrame.headerUpgradeStep then
       advisorFrame.headerUpgradeStep:ClearAllPoints()
-      advisorFrame.headerUpgradeStep:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_CREST_STEP_X, 0)
+      advisorFrame.headerUpgradeStep:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA.CREST_STEP_X, 0)
       advisorFrame.headerUpgradeStep:SetText(NS.CREST_HEADER_STEP)
       advisorFrame.headerUpgradeStep:Show()
     end
     if recHdr then
-      recHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_CREST_AFTER_X, 0)
+      recHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA.CREST_AFTER_X, 0)
       recHdr:SetText(NS.CREST_AFTER_UPGRADE_LABEL)
       recHdr:Show()
     end
     if advisorFrame.headerCost then
       advisorFrame.headerCost:ClearAllPoints()
-      advisorFrame.headerCost:SetPoint("RIGHT", advisorFrame.headerFrame, "RIGHT", -GA_CREST_COST_RIGHT, 0)
+      advisorFrame.headerCost:SetPoint("RIGHT", advisorFrame.headerFrame, "RIGHT", -GA.CREST_COST_RIGHT, 0)
       advisorFrame.headerCost:SetText(NS.CREST_HEADER_COST)
       advisorFrame.headerCost:Show()
     end
@@ -1648,11 +1669,11 @@ local function syncAdvisorListHeader()
   elseif isLoadoutMode() and isShowingLoadoutResults() then
     slotHdr:SetText("Slot")
     slotHdr:Show()
-    detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_LOADOUT_CURRENT_X, 0)
+    detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA.LOADOUT_CURRENT_X, 0)
     detailHdr:SetText(NS.LOADOUT_CURRENT_LABEL)
     detailHdr:Show()
     if recHdr then
-      recHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_LOADOUT_REC_X, 0)
+      recHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA.LOADOUT_REC_X, 0)
       recHdr:SetText(NS.LOADOUT_RECOMMENDED_LABEL)
       recHdr:Show()
     end
@@ -1667,7 +1688,7 @@ local function syncAdvisorListHeader()
     if isLootFarmView() then
       slotHdr:SetText("#")
       slotHdr:Show()
-      detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_ICONS_COL_X, 0)
+      detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA.ICONS_COL_X, 0)
       detailHdr:SetText("Boss · EV / Best · drops")
       detailHdr:Show()
       metricHdr:ClearAllPoints()
@@ -1677,7 +1698,7 @@ local function syncAdvisorListHeader()
     else
       slotHdr:SetText("Slot")
       slotHdr:Show()
-      detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA_ICONS_COL_X, 0)
+      detailHdr:SetPoint("LEFT", advisorFrame.headerFrame, "LEFT", GA.ICONS_COL_X, 0)
       if currentMode == "bags" and NS.isGreatVaultFrameOpen() then
         detailHdr:SetText("Equipped and alternatives (purple border = vault)")
       else
@@ -1705,7 +1726,7 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
     slotText:SetText(slotRow.slot_label or "")
     slotText:SetTextColor(0.55, 0.55, 0.6)
     local note = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    note:SetPoint("LEFT", row, "LEFT", GA_ICONS_COL_X, 0)
+    note:SetPoint("LEFT", row, "LEFT", GA.ICONS_COL_X, 0)
     note:SetText(NS.MSG_TRINKET_BASELINE)
     note:SetTextColor(0.5, 0.5, 0.55)
     return yOffset + 34
@@ -1733,7 +1754,7 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
   local lines = math.max(1, math.ceil(math.max(1, iconCount) / iconsPerLine))
   local showWeaponDps = (slotId == 16 or slotId == 17)
   local dpsLineExtra = showWeaponDps and 12 or 0
-  local rowHeight = math.max(38, lines * (GA_ICON_SIZE + GA_ICON_SPACING + dpsLineExtra) + 10)
+  local rowHeight = math.max(38, lines * (GA.ICON_SIZE + GA.ICON_SPACING + dpsLineExtra) + 10)
 
   local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
   table.insert(advisorRows, row)
@@ -1751,15 +1772,15 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
   local slotText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   slotText:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -10)
   slotText:SetText(slotLabel)
-  slotText:SetWidth(GA_SLOT_COL_WIDTH)
+  slotText:SetWidth(GA.SLOT_COL_WIDTH)
   slotText:SetJustifyH("LEFT")
   slotText:SetTextColor(0.9, 0.9, 0.95)
 
   if iconCount == 0 or (iconCount == 1 and icons[1] and icons[1].is_equipped) then
     local emptyText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    local emptyX = GA_ICONS_COL_X
+    local emptyX = GA.ICONS_COL_X
     if iconCount == 1 and icons[1] and icons[1].is_equipped then
-      emptyX = GA_ICONS_COL_X + GA_ICON_SIZE + 10
+      emptyX = GA.ICONS_COL_X + GA.ICON_SIZE + 10
     end
     emptyText:SetPoint("TOPLEFT", row, "TOPLEFT", emptyX, -10)
     emptyText:SetText("No alternate items for this slot")
@@ -1769,8 +1790,8 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
   for iconIndex, iconInfo in ipairs(icons) do
     local col = (iconIndex - 1) % iconsPerLine
     local line = math.floor((iconIndex - 1) / iconsPerLine)
-    local x = GA_ICONS_COL_X + col * (GA_ICON_SIZE + GA_ICON_SPACING)
-    local y = -6 - line * (GA_ICON_SIZE + GA_ICON_SPACING)
+    local x = GA.ICONS_COL_X + col * (GA.ICON_SIZE + GA.ICON_SPACING)
+    local y = -6 - line * (GA.ICON_SIZE + GA.ICON_SPACING)
     local cand = iconInfo.candidate
 
     local borderR, borderG, borderB = 0.35, 0.35, 0.35
@@ -1785,15 +1806,15 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
         borderR, borderG, borderB = 0.7, 0.2, 0.2
       end
     elseif isVaultWinner then
-      borderR, borderG, borderB = VAULT_WINNER_BORDER[1], VAULT_WINNER_BORDER[2], VAULT_WINNER_BORDER[3]
+      borderR, borderG, borderB = VAULT.WINNER_BORDER[1], VAULT.WINNER_BORDER[2], VAULT.WINNER_BORDER[3]
       bgA = 0.45
       edgeSize = 12
     elseif isVault and iconInfo.is_selected then
-      borderR, borderG, borderB = VAULT_BORDER_SELECTED[1], VAULT_BORDER_SELECTED[2], VAULT_BORDER_SELECTED[3]
+      borderR, borderG, borderB = VAULT.BORDER_SELECTED[1], VAULT.BORDER_SELECTED[2], VAULT.BORDER_SELECTED[3]
       bgA = 0.4
       edgeSize = 12
     elseif isVault then
-      borderR, borderG, borderB = VAULT_BORDER[1], VAULT_BORDER[2], VAULT_BORDER[3]
+      borderR, borderG, borderB = VAULT.BORDER[1], VAULT.BORDER[2], VAULT.BORDER[3]
       bgA = 0.32
       edgeSize = 12
     elseif iconInfo.is_selected then
@@ -1805,7 +1826,7 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
     end
 
     local iconBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
-    iconBtn:SetSize(GA_ICON_SIZE, GA_ICON_SIZE)
+    iconBtn:SetSize(GA.ICON_SIZE, GA.ICON_SIZE)
     iconBtn:SetPoint("TOPLEFT", row, "TOPLEFT", x, y)
     iconBtn:SetBackdrop({
       bgFile = "Interface/Buttons/WHITE8X8",
@@ -1854,7 +1875,7 @@ local function renderAdvisorSlotOverviewRow(itemList, listWidth, slotRow, rowInd
     if not iconInfo.is_equipped and cand and cand.dps_delta ~= nil then
       local dpsTag = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
       dpsTag:SetPoint("TOP", iconBtn, "BOTTOM", 0, -1)
-      dpsTag:SetWidth(GA_ICON_SIZE + 4)
+      dpsTag:SetWidth(GA.ICON_SIZE + 4)
       dpsTag:SetJustifyH("CENTER")
       local dpsLabel = NS.formatDelta(cand.dps_delta)
       if cand.weapon_pair_scored then
@@ -2189,7 +2210,7 @@ local function renderLoadoutVaultWinnerBanner(itemList, listWidth, winnerRow, yO
     insets = { left = 3, right = 3, top = 3, bottom = 3 },
   })
   row:SetBackdropColor(0.14, 0.1, 0.2, 0.95)
-  row:SetBackdropBorderColor(VAULT_WINNER_BORDER[1], VAULT_WINNER_BORDER[2], VAULT_WINNER_BORDER[3], 1)
+  row:SetBackdropBorderColor(VAULT.WINNER_BORDER[1], VAULT.WINNER_BORDER[2], VAULT.WINNER_BORDER[3], 1)
 
   local title = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   title:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
@@ -2205,7 +2226,7 @@ local function renderLoadoutVaultWinnerBanner(itemList, listWidth, winnerRow, yO
     tile = true, tileSize = 8, edgeSize = 10,
     insets = { left = 2, right = 2, top = 2, bottom = 2 },
   })
-  iconBtn:SetBackdropBorderColor(VAULT_BORDER[1], VAULT_BORDER[2], VAULT_BORDER[3], 1)
+  iconBtn:SetBackdropBorderColor(VAULT.BORDER[1], VAULT.BORDER[2], VAULT.BORDER[3], 1)
   iconBtn:SetBackdropColor(0, 0, 0, 0.35)
   local tex = iconBtn:CreateTexture(nil, "ARTWORK")
   tex:SetAllPoints(iconBtn)
@@ -2262,7 +2283,7 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
       insets = { left = 2, right = 2, top = 2, bottom = 2 },
     })
     row:SetBackdropColor(0.14, 0.1, 0.2, 0.9)
-    row:SetBackdropBorderColor(VAULT_WINNER_BORDER[1], VAULT_WINNER_BORDER[2], VAULT_WINNER_BORDER[3], 1)
+    row:SetBackdropBorderColor(VAULT.WINNER_BORDER[1], VAULT.WINNER_BORDER[2], VAULT.WINNER_BORDER[3], 1)
   else
     row:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
     if item.is_upgrade then
@@ -2279,12 +2300,12 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
   slotText:SetTextColor(0.85, 0.85, 0.9)
 
   local rightReserve = isLootLoadoutResults() and 210 or 90
-  local nameColWidth = math.max(100, math.floor((listWidth - GA_LOADOUT_REC_X - rightReserve) / 2))
+  local nameColWidth = math.max(100, math.floor((listWidth - GA.LOADOUT_REC_X - rightReserve) / 2))
 
   if item.is_upgrade then
     addLoadoutItemBlock(
       row,
-      GA_LOADOUT_CURRENT_X,
+      GA.LOADOUT_CURRENT_X,
       item.equipped_link,
       item.equipped_name,
       item.equipped_quality,
@@ -2292,14 +2313,14 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
       true
     )
     local arrow = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    arrow:SetPoint("LEFT", row, "LEFT", GA_LOADOUT_REC_X - 14, 0)
+    arrow:SetPoint("LEFT", row, "LEFT", GA.LOADOUT_REC_X - 14, 0)
     arrow:SetText(">")
     arrow:SetTextColor(0.55, 0.55, 0.6)
     local recOpts = nil
     if item.source == "vault" then
       recOpts = { vaultBorder = true, vaultWinner = isVaultWinner }
     end
-    addLoadoutItemBlock(row, GA_LOADOUT_REC_X, item.link, item.name, item.quality, nameColWidth, false, recOpts)
+    addLoadoutItemBlock(row, GA.LOADOUT_REC_X, item.link, item.name, item.quality, nameColWidth, false, recOpts)
   else
     local eqLink = item.equipped_link or item.link
     local eqName = item.equipped_name or item.name
@@ -2307,9 +2328,9 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
     if eqQuality == nil then
       eqQuality = item.quality
     end
-    addLoadoutItemBlock(row, GA_LOADOUT_CURRENT_X, eqLink, eqName, eqQuality, nameColWidth, false)
+    addLoadoutItemBlock(row, GA.LOADOUT_CURRENT_X, eqLink, eqName, eqQuality, nameColWidth, false)
     local optimalText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    optimalText:SetPoint("LEFT", row, "LEFT", GA_LOADOUT_REC_X, 0)
+    optimalText:SetPoint("LEFT", row, "LEFT", GA.LOADOUT_REC_X, 0)
     optimalText:SetText(NS.LOADOUT_ROW_ALREADY_OPTIMAL)
     optimalText:SetTextColor(0.5, 0.75, 0.55)
   end
@@ -2368,7 +2389,7 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
       local equipBtn = NS.createUIButton(row, {
         text = "Retry",
         width = 60,
-        height = GA_CTRL_H,
+        height = GA.CTRL_H,
         onClick = function()
           loadoutEquipState[equipKey] = nil
           tryEquipLoadoutItem(item)
@@ -2381,7 +2402,7 @@ local function renderLoadoutRow(itemList, listWidth, item, i, yOffset)
       local equipBtn = NS.createUIButton(row, {
         text = (equipState == "pending") and "..." or "Equip",
         width = 60,
-        height = GA_CTRL_H,
+        height = GA.CTRL_H,
       })
       equipBtn:SetPoint("RIGHT", row, "RIGHT", -88, 0)
       if equipState == "pending" then
@@ -2483,7 +2504,7 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
 
   local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
   table.insert(advisorRows, row)
-  row:SetSize(listWidth, GA_CREST_ROW_H)
+  row:SetSize(listWidth, GA.CREST_ROW_H)
   row:SetPoint("TOPLEFT", itemList, "TOPLEFT", 0, -yOffset)
   row:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", tile = true, tileSize = 16 })
   if inPlan then
@@ -2523,11 +2544,11 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
   end
 
   local nameColWidth = crestItemNameWidth(listWidth)
-  addLoadoutItemBlock(row, GA_CREST_CURRENT_X, item.link, item.name, item.quality, nameColWidth, item.can_afford == false)
+  addLoadoutItemBlock(row, GA.CREST_CURRENT_X, item.link, item.name, item.quality, nameColWidth, item.can_afford == false)
 
   local stepText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  stepText:SetPoint("LEFT", row, "LEFT", GA_CREST_STEP_X, 0)
-  stepText:SetWidth(GA_CREST_STEP_WIDTH)
+  stepText:SetPoint("LEFT", row, "LEFT", GA.CREST_STEP_X, 0)
+  stepText:SetWidth(GA.CREST_STEP_WIDTH)
   stepText:SetJustifyH("LEFT")
   stepText:SetText(NS.formatCrestUpgradeStepLine(item))
   stepText:SetTextColor(0.68, 0.72, 0.78)
@@ -2535,7 +2556,7 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
   if hasPreview then
     addLoadoutItemBlock(
       row,
-      GA_CREST_AFTER_X,
+      GA.CREST_AFTER_X,
       item.preview_link,
       item.preview_name or item.name,
       item.preview_quality or item.quality,
@@ -2557,7 +2578,7 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
   else
     costText:SetPoint("RIGHT", row, "RIGHT", costAnchorX, 2)
   end
-  costText:SetWidth(GA_CREST_COST_WIDTH - 18)
+  costText:SetWidth(GA.CREST_COST_WIDTH - 18)
   costText:SetJustifyH("RIGHT")
   costText:SetWordWrap(false)
   local costLabel = item.crest_label or ""
@@ -2579,7 +2600,7 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
   else
     ownedText:SetPoint("TOPRIGHT", costText, "BOTTOMRIGHT", 0, -1)
   end
-  ownedText:SetWidth(GA_CREST_COST_WIDTH - 16)
+  ownedText:SetWidth(GA.CREST_COST_WIDTH - 16)
   ownedText:SetJustifyH("RIGHT")
   ownedText:SetWordWrap(false)
   if item.currency_id and item.crest_owned ~= nil then
@@ -2589,12 +2610,12 @@ local function renderCrestRow(itemList, listWidth, item, i, yOffset)
 
   local metricText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   metricText:SetPoint("RIGHT", row, "RIGHT", crestColumnRight(listWidth, "dps"), 0)
-  metricText:SetWidth(GA_CREST_DPS_WIDTH)
+  metricText:SetWidth(GA.CREST_DPS_WIDTH)
   metricText:SetJustifyH("RIGHT")
   metricText:SetText(NS.formatDpsVsEquippedPerCrest(item.dps_delta, item.dps_per_crest))
   NS.setDpsDeltaTextColor(metricText, item.dps_delta)
 
-  return yOffset + GA_CREST_ROW_H + 1
+  return yOffset + GA.CREST_ROW_H + 1
 end
 
 local function renderFarmBossRow(itemList, listWidth, boss, rowIndex, yOffset, iconsPerLine, opts)
@@ -2609,7 +2630,7 @@ local function renderFarmBossRow(itemList, listWidth, boss, rowIndex, yOffset, i
   local shown = math.min(#drops, iconCap)
   local more = #drops - shown
   local lines = math.max(1, math.ceil(math.max(1, shown) / iconsPerLine))
-  local rowHeight = math.max(48, 28 + lines * (GA_ICON_SIZE + GA_ICON_SPACING + 12))
+  local rowHeight = math.max(48, 28 + lines * (GA.ICON_SIZE + GA.ICON_SPACING + 12))
 
   local row = CreateFrame("Frame", nil, itemList, "BackdropTemplate")
   table.insert(advisorRows, row)
@@ -2672,13 +2693,13 @@ local function renderFarmBossRow(itemList, listWidth, boss, rowIndex, yOffset, i
     local cand = drop.candidate
     local col = (i - 1) % iconsPerLine
     local line = math.floor((i - 1) / iconsPerLine)
-    local x = 42 + col * (GA_ICON_SIZE + GA_ICON_SPACING)
-    local y = iconY - line * (GA_ICON_SIZE + GA_ICON_SPACING + 12)
+    local x = 42 + col * (GA.ICON_SIZE + GA.ICON_SPACING)
+    local y = iconY - line * (GA.ICON_SIZE + GA.ICON_SPACING + 12)
     local delta = drop.estimate_delta or (cand and cand.dps_delta) or 0
     local isUpgrade = delta > 0
 
     local iconBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
-    iconBtn:SetSize(GA_ICON_SIZE, GA_ICON_SIZE)
+    iconBtn:SetSize(GA.ICON_SIZE, GA.ICON_SIZE)
     iconBtn:SetPoint("TOPLEFT", row, "TOPLEFT", x, y)
     iconBtn:SetBackdrop({
       bgFile = "Interface/Buttons/WHITE8X8",
@@ -2711,7 +2732,7 @@ local function renderFarmBossRow(itemList, listWidth, boss, rowIndex, yOffset, i
 
     local dpsTag = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     dpsTag:SetPoint("TOP", iconBtn, "BOTTOM", 0, -1)
-    dpsTag:SetWidth(GA_ICON_SIZE + 4)
+    dpsTag:SetWidth(GA.ICON_SIZE + 4)
     dpsTag:SetJustifyH("CENTER")
     dpsTag:SetText(NS.formatDelta(delta))
     if isUpgrade then
@@ -2813,9 +2834,9 @@ renderAdvisorRows = function()
   advisorRows = {}
 
   local itemList = advisorFrame.itemList
-  local listWidth = itemList:GetWidth() or (GA_WIDTH - GA_PADDING - GA_SCROLL_INSET)
+  local listWidth = itemList:GetWidth() or (GA.WIDTH - GA.PADDING - GA.SCROLL_INSET)
   local yOffset = 0
-  local iconsPerLine = math.max(1, math.floor((listWidth - GA_ICONS_COL_X) / (GA_ICON_SIZE + GA_ICON_SPACING)))
+  local iconsPerLine = math.max(1, math.floor((listWidth - GA.ICONS_COL_X) / (GA.ICON_SIZE + GA.ICON_SPACING)))
 
   if currentMode == "crests" then
     if #crestRows == 0 then
@@ -3629,8 +3650,8 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     f = Lib:CreatePanel(UIParent, {
       name = "MrMythicalDpsGearAdvisorFrame",
       title = NS.BRAND,
-      width = GA_WIDTH,
-      height = GA_HEIGHT,
+      width = GA.WIDTH,
+      height = GA.HEIGHT,
       movable = true,
       frameStrata = "DIALOG",
     })
@@ -3640,12 +3661,12 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
     if f.Title then
       f.Title:ClearAllPoints()
-      f.Title:SetPoint("TOPLEFT", f, "TOPLEFT", GA_PADDING, -10)
+      f.Title:SetPoint("TOPLEFT", f, "TOPLEFT", GA.PADDING, -10)
       f.Title:SetTextColor(1, 0.92, 0.55)
     end
   else
     f = CreateFrame("Frame", "MrMythicalDpsGearAdvisorFrame", UIParent, "BackdropTemplate")
-    f:SetSize(GA_WIDTH, GA_HEIGHT)
+    f:SetSize(GA.WIDTH, GA.HEIGHT)
     f:SetFrameStrata("DIALOG")
     f:SetBackdrop({
       bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -3664,7 +3685,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
 
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", f, "TOPLEFT", GA_PADDING, -10)
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", GA.PADDING, -10)
     title:SetText(NS.BRAND)
     title:SetTextColor(1, 0.92, 0.55)
     f.Title = title
@@ -3744,7 +3765,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local disclaimerText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   disclaimerText:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
-  disclaimerText:SetWidth(GA_WIDTH - GA_PADDING * 2 - 40)
+  disclaimerText:SetWidth(GA.WIDTH - GA.PADDING * 2 - 40)
   disclaimerText:SetJustifyH("LEFT")
   disclaimerText:SetText(NS.DISCLAIMER_HEADER)
   disclaimerText:SetTextColor(0.5, 0.52, 0.58)
@@ -3752,7 +3773,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local validationAnchor = CreateFrame("Frame", nil, f)
   validationAnchor:SetPoint("TOPLEFT", disclaimerText, "BOTTOMLEFT", 0, -2)
-  validationAnchor:SetSize(GA_WIDTH - GA_PADDING * 2, 1)
+  validationAnchor:SetSize(GA.WIDTH - GA.PADDING * 2, 1)
   f.validationAnchor = validationAnchor
   if NS.attachValidationButton then
     NS.attachValidationButton(f, validationAnchor)
@@ -3766,8 +3787,9 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   profileCallout = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   profileCallout:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", 0, -2)
-  profileCallout:SetWidth(420)
+  profileCallout:SetWidth(GA.WIDTH - GA.PADDING * 2)
   profileCallout:SetJustifyH("LEFT")
+  profileCallout:SetWordWrap(true)
   profileCallout:SetTextColor(1, 0.82, 0.2)
   profileCallout:Hide()
 
@@ -3776,12 +3798,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     profileDropdown = Lib:CreateDropdown(f, {
       name = "MrMythicalDpsAdvisorProfileDropdown",
       width = 220,
-      height = GA_CTRL_H,
+      height = GA.CTRL_H,
     })
     profileDropdown:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", 0, -16)
+    profileDropdown._insetX = 0
   else
     profileDropdown = CreateFrame("Frame", "MrMythicalDpsAdvisorProfileDropdown", f, "UIDropDownMenuTemplate")
     profileDropdown:SetPoint("TOPLEFT", profileSectionLabel, "BOTTOMLEFT", -16, -16)
+    profileDropdown._insetX = -16
   end
   f.profileDropdown = profileDropdown
 
@@ -3792,9 +3816,9 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     modeBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
   end
   modeBar:SetPoint("TOP", profileDropdown, "BOTTOM", 0, -8)
-  modeBar:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
-  modeBar:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
-  modeBar:SetHeight(GA_MODE_BAR_H)
+  modeBar:SetPoint("LEFT", f, "LEFT", GA.PADDING, 0)
+  modeBar:SetPoint("RIGHT", f, "RIGHT", -GA.PADDING, 0)
+  modeBar:SetHeight(GA.MODE_BAR_H)
   if Lib then
     local modeBg = Lib:CreateColorTexture(modeBar, Lib.Theme.COLORS.NAV_BACKGROUND, "BACKGROUND")
     modeBg:SetAllPoints()
@@ -3815,14 +3839,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
         text = mode.label,
         id = mode.id,
         width = tabWidth,
-        height = GA_CTRL_H,
+        height = GA.CTRL_H,
         selected = false,
       })
       btn:SetPoint("LEFT", modeBar, "LEFT", mx, 0)
       btn.text = btn.Label
     else
       btn = CreateFrame("Button", nil, modeBar, "BackdropTemplate")
-      btn:SetSize(tabWidth, GA_CTRL_H)
+      btn:SetSize(tabWidth, GA.CTRL_H)
       btn:SetPoint("LEFT", modeBar, "LEFT", mx, 0)
       btn:SetBackdrop({ bgFile = "Interface/Buttons/WHITE8X8", tile = true, tileSize = 8 })
       btn:SetBackdropColor(0.14, 0.14, 0.18, 0.9)
@@ -3837,9 +3861,9 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local statusFrame = CreateFrame("Frame", nil, f)
   statusFrame:SetPoint("TOP", modeBar, "BOTTOM", 0, -2)
-  statusFrame:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
-  statusFrame:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
-  statusFrame:SetHeight(GA_STATUS_H)
+  statusFrame:SetPoint("LEFT", f, "LEFT", GA.PADDING, 0)
+  statusFrame:SetPoint("RIGHT", f, "RIGHT", -GA.PADDING, 0)
+  statusFrame:SetHeight(GA.STATUS_H)
   f.statusFrame = statusFrame
 
   local summaryText = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -3869,9 +3893,9 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     actionBar:SetBackdropColor(0.14, 0.14, 0.18, 0.75)
   end
   actionBar:SetPoint("TOP", statusFrame, "BOTTOM", 0, -1)
-  actionBar:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
-  actionBar:SetPoint("RIGHT", f, "RIGHT", -GA_PADDING, 0)
-  actionBar:SetHeight(GA_ACTION_H)
+  actionBar:SetPoint("LEFT", f, "LEFT", GA.PADDING, 0)
+  actionBar:SetPoint("RIGHT", f, "RIGHT", -GA.PADDING, 0)
+  actionBar:SetHeight(GA.ACTION_H)
   f.actionBar = actionBar
 
   local vaultStatusText = actionBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -3883,7 +3907,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local findLoadoutBtn = NS.createUIButton(actionBar, {
     text = NS.MSG_RUN_SCAN or "Run Scan",
     width = 90,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     onClick = runFindLoadout,
   })
   findLoadoutBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
@@ -3891,14 +3915,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local lootViewBar = CreateFrame("Frame", nil, actionBar)
   lootViewBar:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
-  lootViewBar:SetSize(210, GA_CTRL_H)
+  lootViewBar:SetSize(210, GA.CTRL_H)
   lootViewBar:Hide()
   f.lootViewBar = lootViewBar
 
   local lootFarmViewBtn = NS.createUIButton(lootViewBar, {
     text = NS.MSG_FARM_VIEW_FARM or "Farm priority",
     width = 110,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     onClick = function()
       setLootViewMode("farm")
     end,
@@ -3909,7 +3933,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local lootSlotsViewBtn = NS.createUIButton(lootViewBar, {
     text = NS.MSG_FARM_VIEW_SLOTS or "BiS Scan",
     width = 88,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     onClick = function()
       setLootViewMode("slots")
     end,
@@ -3929,7 +3953,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   end
   farmControlsBar:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
   farmControlsBar:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
-  farmControlsBar:SetHeight(GA_FILTER_ROW_H)
+  farmControlsBar:SetHeight(GA.FILTER_ROW_H)
   farmControlsBar:Hide()
   f.farmControlsBar = farmControlsBar
 
@@ -3948,7 +3972,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local farmGroupCheck = NS.createUICheckbox(farmControlsBar, {
     text = NS.MSG_FARM_GROUP_INSTANCE or "Group by instance",
     width = 160,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_farm_group_by_instance == true,
     onClick = function(_, checked)
       setFarmGroupByInstance(checked)
@@ -3963,7 +3987,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     farmSortDropdown = Lib:CreateDropdown(farmControlsBar, {
       name = "MrMythicalDpsAdvisorFarmSortDropdown",
       width = 168,
-      height = GA_CTRL_H,
+      height = GA.CTRL_H,
       items = farmSortItems,
       value = getFarmSortKey(),
       onValueChanged = function(_, value)
@@ -3993,7 +4017,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local changeSelectionBtn = NS.createUIButton(actionBar, {
     text = "Change Selection",
     width = 120,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     onClick = returnToSelectionView,
   })
   changeSelectionBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
@@ -4003,7 +4027,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local stopScanBtn = NS.createUIButton(actionBar, {
     text = "Stop Scan",
     width = 90,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     onClick = stopAdvisorScan,
   })
   stopScanBtn:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
@@ -4022,14 +4046,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   end
   upgradeFilterFrame:SetPoint("TOPLEFT", actionBar, "BOTTOMLEFT", 0, -2)
   upgradeFilterFrame:SetPoint("TOPRIGHT", actionBar, "BOTTOMRIGHT", 0, -2)
-  upgradeFilterFrame:SetHeight(GA_FILTER_ROW_H)
+  upgradeFilterFrame:SetHeight(GA.FILTER_ROW_H)
   upgradeFilterFrame:Hide()
   f.upgradeFilterFrame = upgradeFilterFrame
 
   local upgradesOnlyCheck = NS.createUICheckbox(upgradeFilterFrame, {
     text = "Upgrades only",
     width = 150,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only == true,
     onClick = function(self, checked)
       MR_MYTHICAL_DPS_CONFIG.gear_advisor_upgrades_only = checked and true or false
@@ -4043,7 +4067,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   local sidegradeCheck = NS.createUICheckbox(upgradeFilterFrame, {
     text = "Include sidegrades",
     width = 180,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     checked = MR_MYTHICAL_DPS_CONFIG.gear_advisor_include_sidegrades == true,
     onClick = function(self, checked)
       NS.setAdvisorIncludeSidegrades(checked)
@@ -4074,14 +4098,14 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local crestFilterFrame = CreateFrame("Frame", nil, actionBar)
   crestFilterFrame:SetPoint("LEFT", actionBar, "LEFT", 8, 0)
-  crestFilterFrame:SetSize(700, GA_CTRL_H)
+  crestFilterFrame:SetSize(700, GA.CTRL_H)
   crestFilterFrame:Hide()
   f.crestFilterFrame = crestFilterFrame
 
   local crestBalanceBar = CreateFrame("Frame", nil, crestFilterFrame)
   crestBalanceBar:SetPoint("LEFT", crestFilterFrame, "LEFT", 0, 0)
   crestBalanceBar:SetPoint("RIGHT", crestFilterFrame, "RIGHT", 0, 0)
-  crestBalanceBar:SetHeight(GA_CTRL_H)
+  crestBalanceBar:SetHeight(GA.CTRL_H)
   f.crestBalanceBar = crestBalanceBar
 
   local instanceDropdown
@@ -4091,7 +4115,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     instanceDropdown = Lib:CreateDropdown(actionBar, {
       name = "MrMythicalDpsAdvisorInstanceDropdown",
       width = 200,
-      height = GA_CTRL_H,
+      height = GA.CTRL_H,
       minMenuWidth = 260,
       maxMenuWidth = 420,
     })
@@ -4102,7 +4126,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     ilvlDropdown = Lib:CreateDropdown(actionBar, {
       name = "MrMythicalDpsAdvisorIlvlDropdown",
       width = 160,
-      height = GA_CTRL_H,
+      height = GA.CTRL_H,
       minMenuWidth = 200,
       maxMenuWidth = 320,
     })
@@ -4113,7 +4137,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     perfDropdown = Lib:CreateDropdown(actionBar, {
       name = "MrMythicalDpsAdvisorPerfDropdown",
       width = 118,
-      height = GA_CTRL_H,
+      height = GA.CTRL_H,
     })
     perfDropdown:SetPoint("RIGHT", actionBar, "RIGHT", -8, 0)
     f.perfDropdown = perfDropdown
@@ -4139,7 +4163,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
 
   local perfToggleBtn = NS.createUIButton(actionBar, {
     width = 132,
-    height = GA_CTRL_H,
+    height = GA.CTRL_H,
     onClick = function()
       toggleAdvisorScanPerformance()
     end,
@@ -4169,9 +4193,9 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
     headerFrame:SetBackdropColor(0.18, 0.18, 0.22, 0.9)
   end
   headerFrame:SetPoint("TOP", actionBar, "BOTTOM", 0, -2)
-  headerFrame:SetPoint("LEFT", f, "LEFT", GA_PADDING, 0)
-  headerFrame:SetPoint("RIGHT", f, "RIGHT", -GA_SCROLL_INSET, 0)
-  headerFrame:SetHeight(GA_HEADER_H)
+  headerFrame:SetPoint("LEFT", f, "LEFT", GA.PADDING, 0)
+  headerFrame:SetPoint("RIGHT", f, "RIGHT", -GA.SCROLL_INSET, 0)
+  headerFrame:SetHeight(GA.HEADER_H)
   f.headerFrame = headerFrame
 
   local headerSlot = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -4181,7 +4205,7 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   f.headerSlot = headerSlot
 
   local headerDetail = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  headerDetail:SetPoint("LEFT", headerFrame, "LEFT", GA_ICONS_COL_X, 0)
+  headerDetail:SetPoint("LEFT", headerFrame, "LEFT", GA.ICONS_COL_X, 0)
   headerDetail:SetText("Item")
   headerDetail:SetTextColor(0.85, 0.85, 0.9)
   f.headerDetail = headerDetail
@@ -4193,21 +4217,21 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   f.headerMetric = headerMetric
 
   local headerRec = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  headerRec:SetPoint("LEFT", headerFrame, "LEFT", GA_LOADOUT_REC_X, 0)
+  headerRec:SetPoint("LEFT", headerFrame, "LEFT", GA.LOADOUT_REC_X, 0)
   headerRec:SetText(NS.LOADOUT_RECOMMENDED_LABEL)
   headerRec:SetTextColor(0.85, 0.85, 0.9)
   headerRec:Hide()
   f.headerRec = headerRec
 
   local headerUpgradeStep = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  headerUpgradeStep:SetPoint("LEFT", headerFrame, "LEFT", GA_CREST_STEP_X, 0)
+  headerUpgradeStep:SetPoint("LEFT", headerFrame, "LEFT", GA.CREST_STEP_X, 0)
   headerUpgradeStep:SetText(NS.CREST_HEADER_STEP)
   headerUpgradeStep:SetTextColor(0.85, 0.85, 0.9)
   headerUpgradeStep:Hide()
   f.headerUpgradeStep = headerUpgradeStep
 
   local headerCost = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  headerCost:SetPoint("RIGHT", headerFrame, "RIGHT", -GA_CREST_COST_RIGHT, 0)
+  headerCost:SetPoint("RIGHT", headerFrame, "RIGHT", -GA.CREST_COST_RIGHT, 0)
   headerCost:SetText(NS.CREST_HEADER_COST)
   headerCost:SetTextColor(0.85, 0.85, 0.9)
   headerCost:Hide()
@@ -4218,23 +4242,23 @@ local function createGearAdvisorFrame(prefillSources, prefillMode)
   if Lib then
     scrollHost = Lib:CreateScrollFrame(f, {
       name = "MrMythicalDpsGearAdvisorScroll",
-      width = GA_WIDTH - GA_PADDING - GA_SCROLL_INSET,
+      width = GA.WIDTH - GA.PADDING - GA.SCROLL_INSET,
       height = 300,
     })
     scrollHost:ClearAllPoints()
     scrollHost:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -2)
     scrollHost:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -2)
-    scrollHost:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA_SCROLL_INSET, GA_PADDING)
+    scrollHost:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA.SCROLL_INSET, GA.PADDING)
     itemList = CreateFrame("Frame", nil, scrollHost)
-    itemList:SetSize(math.max(1, (scrollHost:GetWidth() or (GA_WIDTH - GA_PADDING - GA_SCROLL_INSET)) - 20), 1)
+    itemList:SetSize(math.max(1, (scrollHost:GetWidth() or (GA.WIDTH - GA.PADDING - GA.SCROLL_INSET)) - 20), 1)
     scrollHost:SetScrollChild(itemList)
   else
     scrollHost = CreateFrame("ScrollFrame", "MrMythicalDpsGearAdvisorScroll", f, "UIPanelScrollFrameTemplate")
     scrollHost:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -2)
     scrollHost:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -2)
-    scrollHost:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA_SCROLL_INSET, GA_PADDING)
+    scrollHost:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -GA.SCROLL_INSET, GA.PADDING)
     itemList = CreateFrame("Frame", nil, scrollHost)
-    itemList:SetSize(scrollHost:GetWidth() or (GA_WIDTH - GA_PADDING - GA_SCROLL_INSET), 1)
+    itemList:SetSize(scrollHost:GetWidth() or (GA.WIDTH - GA.PADDING - GA.SCROLL_INSET), 1)
     scrollHost:SetScrollChild(itemList)
   end
   f.scrollFrame = scrollHost
@@ -4334,9 +4358,22 @@ function NS.refreshGearAdvisorChrome(highlightAmbiguous)
     NS.refreshValidationChrome(f)
   end
 
+  local availability = NS.getProfileAvailability and NS.getProfileAvailability() or "needs_profile"
+  local modeled = NS.hasModeledProfiles and NS.hasModeledProfiles()
   local active = NS.getActiveProfileKey()
+  if f.profileSectionLabel then
+    if availability == "unsupported" or availability == "healer" then
+      f.profileSectionLabel:SetText("Model:")
+    else
+      f.profileSectionLabel:SetText("Hero talent profile:")
+    end
+  end
   local dropLabel = "Select profile…"
-  if active then
+  if availability == "unsupported" then
+    dropLabel = "Not supported yet"
+  elseif availability == "healer" then
+    dropLabel = "Not supported"
+  elseif active then
     dropLabel = NS.getProfileLabel(active)
     if MR_MYTHICAL_DPS_CONFIG.debug then
       dropLabel = dropLabel .. " (" .. active .. ")"
@@ -4344,13 +4381,18 @@ function NS.refreshGearAdvisorChrome(highlightAmbiguous)
   end
   if f.profileDropdown then
     if f.profileDropdown.SetValue then
-      local items = { { text = "Select profile", value = false } }
-      for _, profileKey in ipairs(NS.active_spec_keys) do
-        local label = NS.getProfileLabel(profileKey)
-        if MR_MYTHICAL_DPS_CONFIG.debug then
-          label = label .. " (" .. profileKey .. ")"
+      local items
+      if modeled then
+        items = { { text = "Select profile", value = false } }
+        for _, profileKey in ipairs(NS.active_spec_keys) do
+          local label = NS.getProfileLabel(profileKey)
+          if MR_MYTHICAL_DPS_CONFIG.debug then
+            label = label .. " (" .. profileKey .. ")"
+          end
+          table.insert(items, { text = label, value = profileKey })
         end
-        table.insert(items, { text = label, value = profileKey })
+      else
+        items = { { text = dropLabel, value = false } }
       end
       f.profileDropdown:SetItems(items)
       f.profileDropdown:SetValue(active or false, true)
@@ -4360,20 +4402,61 @@ function NS.refreshGearAdvisorChrome(highlightAmbiguous)
     else
       UIDropDownMenu_SetText(f.profileDropdown, dropLabel)
     end
+    if f.profileDropdown.CloseMenu then
+      f.profileDropdown:CloseMenu()
+    end
+    if f.profileDropdown.Button and f.profileDropdown.Button.SetEnabled then
+      f.profileDropdown.Button:SetEnabled(modeled == true)
+    elseif modeled and UIDropDownMenu_EnableDropDown then
+      UIDropDownMenu_EnableDropDown(f.profileDropdown)
+    elseif not modeled and UIDropDownMenu_DisableDropDown then
+      UIDropDownMenu_DisableDropDown(f.profileDropdown)
+    end
   end
 
   if profileCallout then
     if highlightAmbiguous or NS.isProfileAmbiguous() then
       profileCallout:SetText("Pick a hero talent build that matches your current talents.")
+      profileCallout:SetTextColor(1, 0.82, 0.2)
+      profileCallout:Show()
+    elseif availability == "unsupported" or availability == "healer" then
+      local _, action = NS.getInactiveProfileCopy()
+      profileCallout:SetText(action)
+      profileCallout:SetTextColor(1, 0.6, 0.4)
       profileCallout:Show()
     elseif NS.getProfileMatchInfo and NS.getProfileMatchInfo().lowConfidence then
       profileCallout:SetText(NS.MSG_PROFILE_LOW_CONFIDENCE)
+      profileCallout:SetTextColor(1, 0.82, 0.2)
       profileCallout:Show()
     else
       profileCallout:Hide()
     end
   end
 
+  if f.profileDropdown and f.profileSectionLabel then
+    local insetX = f.profileDropdown._insetX or 0
+    f.profileDropdown:ClearAllPoints()
+    if profileCallout and profileCallout:IsShown() then
+      f.profileDropdown:SetPoint("TOPLEFT", profileCallout, "BOTTOMLEFT", insetX, -6)
+    else
+      f.profileDropdown:SetPoint("TOPLEFT", f.profileSectionLabel, "BOTTOMLEFT", insetX, -16)
+    end
+  end
+end
+
+function NS.refreshGearAdvisorAfterSpecChange()
+  if not advisorFrame or not advisorFrame:IsShown() then
+    return
+  end
+  clearModeScanCache()
+  resetLoadoutScanState()
+  crestRows = {}
+  crestAllRows = {}
+  crestSpendPlan = nil
+  crestPlanSummary = nil
+  NS.refreshGearAdvisorChrome()
+  renderAdvisorRows()
+  scheduleAdvisorScan()
 end
 
 function NS.refreshDashboard()

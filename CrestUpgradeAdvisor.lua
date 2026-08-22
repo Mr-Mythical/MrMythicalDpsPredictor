@@ -488,7 +488,8 @@ local function scheduleLiteScan(delay)
   local specKey = NS.getActiveProfileKey()
   if not specKey then
     litePlan = nil
-    setLiteStatus(NS.MSG_NO_PROFILE_ACTION, 1, 0.5, 0.5)
+    local _, action = NS.getInactiveProfileCopy()
+    setLiteStatus(action, 1, 0.5, 0.5)
     return
   end
 

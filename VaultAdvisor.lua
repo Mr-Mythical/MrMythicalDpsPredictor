@@ -246,7 +246,8 @@ local function startVaultPopupScan()
   end
   local specKey = NS.getActiveProfileKey()
   if not specKey then
-    setVaultPopupBody(NS.MSG_NO_PROFILE_ACTION, 1, 0.5, 0.5)
+    local _, action = NS.getInactiveProfileCopy()
+    setVaultPopupBody(action, 1, 0.5, 0.5)
     return
   end
 
