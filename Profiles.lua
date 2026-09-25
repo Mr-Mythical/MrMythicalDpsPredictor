@@ -1,48 +1,43 @@
 local ADDON_NAME, NS = ...
 local Model = NS.Model
 
--- English model prefixes keyed by specialization ID (locale-independent).
--- Do NOT build prefixes from GetSpecializationInfo()'s localized name.
-local SPEC_ID_TO_MODEL_PREFIX = {
-  [250] = "MID1_Death_Knight_Blood",
-  [251] = "MID1_Death_Knight_Frost",
-  [252] = "MID1_Death_Knight_Unholy",
-  [1480] = "MID1_Demon_Hunter_Devourer",
-  [577] = "MID1_Demon_Hunter_Havoc",
-  [581] = "MID1_Demon_Hunter_Vengeance",
-  [102] = "MID1_Druid_Balance",
-  [103] = "MID1_Druid_Feral",
-  [104] = "MID1_Druid_Guardian",
-  [1467] = "MID1_Evoker_Devastation",
-  [253] = "MID1_Hunter_Beast_Mastery",
-  [254] = "MID1_Hunter_Marksmanship",
-  [255] = "MID1_Hunter_Survival",
-  [62] = "MID1_Mage_Arcane",
-  [63] = "MID1_Mage_Fire",
-  [64] = "MID1_Mage_Frost",
-  [268] = "MID1_Monk_Brewmaster",
-  [269] = "MID1_Monk_Windwalker",
-  [66] = "MID1_Paladin_Protection",
-  [70] = "MID1_Paladin_Retribution",
-  [258] = "MID1_Priest_Shadow",
-  [259] = "MID1_Rogue_Assassination",
-  [260] = "MID1_Rogue_Outlaw",
-  [261] = "MID1_Rogue_Subtlety",
-  [262] = "MID1_Shaman_Elemental",
-  [263] = "MID1_Shaman_Enhancement",
-  [265] = "MID1_Warlock_Affliction",
-  [266] = "MID1_Warlock_Demonology",
-  [267] = "MID1_Warlock_Destruction",
-  [71] = "MID1_Warrior_Arms",
-  [72] = "MID1_Warrior_Fury",
-  [73] = "MID1_Warrior_Protection",
+-- English Class_Spec suffixes keyed by specialization ID (locale-independent).
+-- Do NOT build these from GetSpecializationInfo()'s localized name.
+-- The MID# series prefix is taken from the loaded model (see getModelSeriesPrefix).
+local SPEC_ID_TO_MODEL_SUFFIX = {
+  [250] = "Death_Knight_Blood",
+  [251] = "Death_Knight_Frost",
+  [252] = "Death_Knight_Unholy",
+  [1480] = "Demon_Hunter_Devourer",
+  [577] = "Demon_Hunter_Havoc",
+  [581] = "Demon_Hunter_Vengeance",
+  [102] = "Druid_Balance",
+  [103] = "Druid_Feral",
+  [104] = "Druid_Guardian",
+  [1467] = "Evoker_Devastation",
+  [253] = "Hunter_Beast_Mastery",
+  [254] = "Hunter_Marksmanship",
+  [255] = "Hunter_Survival",
+  [62] = "Mage_Arcane",
+  [63] = "Mage_Fire",
+  [64] = "Mage_Frost",
+  [268] = "Monk_Brewmaster",
+  [269] = "Monk_Windwalker",
+  [66] = "Paladin_Protection",
+  [70] = "Paladin_Retribution",
+  [258] = "Priest_Shadow",
+  [259] = "Rogue_Assassination",
+  [260] = "Rogue_Outlaw",
+  [261] = "Rogue_Subtlety",
+  [262] = "Shaman_Elemental",
+  [263] = "Shaman_Enhancement",
+  [265] = "Warlock_Affliction",
+  [266] = "Warlock_Demonology",
+  [267] = "Warlock_Destruction",
+  [71] = "Warrior_Arms",
+  [72] = "Warrior_Fury",
+  [73] = "Warrior_Protection",
 }
-
-local function buildSpecPrefixFromLocalizedName(classToken, specName)
-  local classKey = NS.CLASS_TOKEN_TO_KEY[classToken]
-  if not classKey or not specName then return nil end
-  return "MID1_" .. classKey .. "_" .. specName:gsub(" ", "_")
-end
 
 local function getSpecKeyList()
   if Model.spec_keys then
@@ -53,6 +48,29 @@ local function getSpecKeyList()
     list[#list + 1] = sfName:gsub("^spec_", "")
   end
   return list
+end
+
+-- Derive MID1/MID2/... from Model.spec_keys so profile lookup stays in sync
+-- when a new ModelData export bumps the series.
+local function getModelSeriesPrefix()
+  for _, key in ipairs(getSpecKeyList()) do
+    local mid = key:match("^(MID%d+)_")
+    if mid then
+      return mid
+    end
+  end
+  return "MID2"
+end
+
+local function modelPrefixForSuffix(suffix)
+  if not suffix then return nil end
+  return getModelSeriesPrefix() .. "_" .. suffix
+end
+
+local function buildSpecPrefixFromLocalizedName(classToken, specName)
+  local classKey = NS.CLASS_TOKEN_TO_KEY[classToken]
+  if not classKey or not specName then return nil end
+  return modelPrefixForSuffix(classKey .. "_" .. specName:gsub(" ", "_"))
 end
 
 local function findSpecProfiles(prefix)
@@ -89,7 +107,7 @@ function NS.detectAndCacheProfiles()
 
   local specID, specName = GetSpecializationInfo(specIndex)
   -- Prefer specialization ID -> English model prefix (works on every client language).
-  local prefix = specID and SPEC_ID_TO_MODEL_PREFIX[specID] or nil
+  local prefix = specID and modelPrefixForSuffix(SPEC_ID_TO_MODEL_SUFFIX[specID]) or nil
   -- enUS fallback only: localized name happens to match English model tokens.
   if not prefix then
     prefix = buildSpecPrefixFromLocalizedName(classToken, specName)
