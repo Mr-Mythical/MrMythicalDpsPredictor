@@ -3,11 +3,11 @@ local V = {}
 
 V.has_data = true
 V.run_id = "validate-20261016T055207.872304Z"
-V.checked_at = "2026-10-19T15:15:05.915630+00:00"
-V.checked_label = "2026-10-19 15:15"
+V.checked_at = "2026-10-20T11:46:08.828608+00:00"
+V.checked_label = "2026-10-20 11:46"
 V.status = "up_to_date"
-V.confirmed_at = "2026-10-19T15:15:05.915630+00:00"
-V.confirmed_label = "2026-10-19 15:15"
+V.confirmed_at = "2026-10-20T11:46:08.828608+00:00"
+V.confirmed_label = "2026-10-20 11:46"
 V.is_full_run = true
 V.is_current = true
 V.overall = {
